@@ -1,0 +1,116 @@
+# syntax=docker/dockerfile:1
+# check=skip=InvalidDefaultArgInFrom # defaults are specified in bakefiles
+# vim: ft=dockerfile
+
+ARG BASE_UBI_IMAGE_TAG
+ARG PYTHON_VERSION
+
+## Base Layer ##################################################################
+FROM registry.access.redhat.com/ubi9/ubi-minimal:${BASE_UBI_IMAGE_TAG} AS base
+ARG PYTHON_VERSION
+ENV PYTHON_VERSION=${PYTHON_VERSION}
+RUN microdnf -y update && microdnf install -y \
+    python${PYTHON_VERSION}-pip python${PYTHON_VERSION}-wheel \
+    && microdnf clean all
+
+WORKDIR /workspace
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# Some utils for dev purposes - tar required for kubectl cp
+RUN microdnf install -y \
+        which procps findutils tar \
+    && microdnf clean all
+
+
+FROM base AS cuda-base
+ARG BASE_UBI_IMAGE_TAG
+ARG CUDA_MAJOR
+ARG CUDA_MINOR
+
+RUN export rhel_base=${BASE_UBI_IMAGE_TAG/\.*/} && \
+    curl -Lo /etc/yum.repos.d/cuda-rhel${rhel_base}.repo \
+    https://developer.download.nvidia.com/compute/cuda/repos/rhel${rhel_base}/x86_64/cuda-rhel${rhel_base}.repo
+
+ENV CUDA_MAJOR=${CUDA_MAJOR}
+ENV CUDA_MINOR=${CUDA_MINOR}
+ENV CUDA_HOME="/usr/local/cuda-${CUDA_MAJOR}.${CUDA_MINOR}"
+ENV PATH="${CUDA_HOME}/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs/:${CUDA_HOME}/extras/CUPTI/lib64"
+# cuobjdump, nvcc, and nvrtc and are required by deepgemm for JIT
+# cudart-devel has headers needed for apache-tvm-ffi's optional JIT torch c dlpack extension
+RUN microdnf install -y --nodocs \
+        cuda-cuobjdump-${CUDA_MAJOR}-${CUDA_MINOR} \
+        cuda-nvcc-${CUDA_MAJOR}-${CUDA_MINOR} \
+        cuda-nvrtc-${CUDA_MAJOR}-${CUDA_MINOR} \
+        cuda-cudart-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
+    && microdnf clean all
+
+## System Dependencies (multimedia support for vllm-omni) #####################
+FROM cuda-base AS system-deps
+# Install EPEL and multimedia packages (ffmpeg, sox)
+RUN microdnf install -y \
+    https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+    && microdnf install -y ffmpeg sox \
+    && microdnf clean all
+
+## Python Installer ############################################################
+FROM system-deps AS python-install
+ARG PYTHON_VERSION
+ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu${CUDA_MAJOR}${CUDA_MINOR}
+ENV UV_INDEX_STRATEGY=unsafe-best-match
+
+ENV VIRTUAL_ENV=/opt/vllm
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+ENV PYTHON_VERSION=${PYTHON_VERSION}
+RUN microdnf install -y \
+    python${PYTHON_VERSION}-devel  && \
+    python${PYTHON_VERSION} -m venv $VIRTUAL_ENV && \
+    pip install --no-cache -U pip wheel uv && \
+    microdnf clean all
+
+
+## Release #####################################################################
+FROM python-install AS vllm-omni-openai
+ARG PYTHON_VERSION
+
+WORKDIR /workspace
+
+ENV VIRTUAL_ENV=/opt/vllm
+ENV PATH="$VIRTUAL_ENV/bin:${CUDA_HOME}/bin:$PATH"
+
+# force using the python venv's cuda runtime libraries
+ENV LD_LIBRARY_PATH="${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages/nvidia/cuda_nvrtc/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages/nvidia/cuda_runtime/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages/nvidia/nvtx/lib:${LD_LIBRARY_PATH}"
+ENV LIBRARY_PATH="${CUDA_HOME}/lib64/stubs:/usr/lib64"
+
+# Triton needs a CC compiler, triton-kernels install from a git URL
+RUN microdnf install -y gcc git && \
+    microdnf clean all
+
+
+COPY LICENSE /licenses/vllm.md
+COPY examples/*.jinja /app/data/template/
+RUN mkdir -p /opt/app-root && \
+    ln -s /app/data/template /opt/app-root/template
+# install vllm + vllm-omni (and dependencies) by running the payload script
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,src=payload,target=/workspace/payload \
+    ./payload/run.sh
+
+ENV HF_HUB_OFFLINE=1 \
+    HOME=/home/vllm \
+    VLLM_USAGE_STATS_SERVER=https://console.redhat.com/api/rhaiis-stats \
+    VLLM_USAGE_SOURCE=quay-docker-image \
+    OUTLINES_CACHE_DIR=/tmp/outlines \
+    NUMBA_CACHE_DIR=/tmp/numba \
+    TRITON_CACHE_DIR=/tmp/triton
+
+RUN umask 0002 \
+    && mkdir -p /licenses /home/vllm/.cache \
+    && chmod g+rwx /home/vllm /home/vllm/.cache
+
+# vllm-omni uses vllm entrypoint with --omni flag (matches upstream pattern)
+CMD ["vllm", "serve", "--omni"]
