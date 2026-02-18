@@ -1,0 +1,139 @@
+## Global Args ##################################################################
+ARG BASE_UBI_IMAGE_TAG
+ARG PYTHON_VERSION
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:${BASE_UBI_IMAGE_TAG} AS base
+
+ARG PYTHON_VERSION
+
+ENV VIRTUAL_ENV=/opt/vllm
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+ microdnf -y update && \
+ microdnf install -y --setopt=install_weak_deps=0 --nodocs \
+    python${PYTHON_VERSION}-devel \
+    python${PYTHON_VERSION}-pip \
+    python${PYTHON_VERSION}-wheel && \
+    python${PYTHON_VERSION} -m venv $VIRTUAL_ENV && \
+    pip install -U pip wheel setuptools uv && \
+ microdnf clean all
+
+
+FROM base AS rocm_base
+ARG ROCM_VERSION
+ARG PYTHON_VERSION
+ARG BASE_UBI_IMAGE_TAG
+
+RUN printf "[amdgpu]\n\
+name=amdgpu\n\
+baseurl=https://repo.radeon.com/amdgpu/${ROCM_VERSION}/rhel/${BASE_UBI_IMAGE_TAG/-*/}/main/x86_64/\n\
+enabled=1\n\
+priority=50\n\
+gpgcheck=1\n\
+gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key\n\
+[ROCm-${ROCM_VERSION}]\n\
+name=ROCm${ROCM_VERSION}\n\
+baseurl=https://repo.radeon.com/rocm/rhel9/${ROCM_VERSION}/main\n\
+enabled=1\n\
+priority=50\n\
+gpgcheck=1\n\
+gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key" > /etc/yum.repos.d/amdgpu.repo
+
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    microdnf install -y --nodocs \
+        # aiter requires rocm dev dependencies (and temporarily, which, see https://github.com/ROCm/aiter/pull/932)
+        which \
+        amd-smi-lib \
+        hipblas-devel \
+        hipblaslt-devel \
+        hipcc \
+        hip-devel \
+        hipcub-devel \
+        hipfft-devel \
+        hiprand-devel \
+        hipsolver-devel \
+        hipsparse-devel \
+        hsa-rocr-devel \
+        miopen-hip-devel \
+        rccl-devel \
+        rocblas-devel \
+        rocm-device-libs \
+        rocprim-devel \
+        rocrand-devel \
+        rocthrust-devel \
+        # Install libdrm-amdgpu to avoid errors when retrieving device information (amdgpu.ids: No such file or directory)
+        libdrm-amdgpu \
+        && \
+    microdnf clean all
+
+ENV PATH=/opt/rocm/bin:$PATH
+
+## System Dependencies (multimedia support for vllm-omni) #####################
+FROM rocm_base AS system-deps
+# Install EPEL and multimedia packages (ffmpeg)
+RUN microdnf install -y \
+    https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+    && microdnf install -y ffmpeg \
+    && microdnf clean all
+
+##################################################################################################
+
+FROM system-deps AS vllm-omni-openai
+ARG PYTHON_VERSION
+
+WORKDIR /workspace
+
+ENV VIRTUAL_ENV=/opt/vllm
+ENV PATH=$VIRTUAL_ENV/bin:$PATH
+
+# Required for triton
+RUN microdnf install -y --setopt=install_weak_deps=0 --nodocs gcc rsync && \
+    microdnf clean all
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,src=payload,target=/workspace/payload \
+    ./payload/run.sh
+
+ENV HF_HUB_OFFLINE=1 \
+    HOME=/home/vllm \
+    VLLM_USAGE_STATS_SERVER=https://console.redhat.com/api/rhaiis-stats \
+    VLLM_USAGE_SOURCE=quay-docker-image \
+    # Silences the HF Tokenizers warning
+    TOKENIZERS_PARALLELISM=false  \
+    RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1 \
+    VLLM_USE_TRITON_FLASH_ATTN=0 \
+    VLLM_ROCM_USE_AITER=0 \
+    HIP_FORCE_DEV_KERNARG=1 \
+    OUTLINES_CACHE_DIR=/tmp/outlines \
+    NUMBA_CACHE_DIR=/tmp/numba \
+    TRITON_CACHE_DIR=/tmp/triton \
+    VLLM_CACHE_ROOT=/tmp/vllm
+
+# setup non-root user for OpenShift
+RUN umask 002 && \
+    useradd --uid 2000 --gid 0 vllm && \
+    mkdir -p /licenses /home/vllm && \
+    chmod g+rwx /home/vllm
+
+# pre-download tiktoken/harmony tokenizer for disconnected environments
+# openai_harmony uses TIKTOKEN_RS_CACHE_DIR
+# while the python tiktoken module uses TIKTOKEN_CACHE_DIR
+ENV TIKTOKEN_CACHE_DIR=${HOME}/.cache/tiktoken
+ENV TIKTOKEN_RS_CACHE_DIR=${TIKTOKEN_CACHE_DIR}
+RUN --mount=type=bind,src=tools/predownload_tiktoken_tokenizers.py,target=predownload_tiktoken_tokenizers.py \
+    python predownload_tiktoken_tokenizers.py && \
+    chmod g+rwx "${TIKTOKEN_CACHE_DIR}" && \
+    chown -R vllm:0 ~/.cache
+
+COPY LICENSE /licenses/vllm.md
+COPY examples/*.jinja /app/data/template/
+RUN mkdir -p /opt/app-root && \
+    ln -s /app/data/template /opt/app-root/template
+
+USER 2000
+WORKDIR /home/vllm
+
+# vllm-omni uses vllm serve with --omni flag (matches upstream pattern)
+CMD ["vllm", "serve", "--omni"]
