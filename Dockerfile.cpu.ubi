@@ -29,8 +29,8 @@ RUN microdnf install -y \
 ## System Dependencies (multimedia support for vllm-omni) #####################
 FROM base AS system-deps
 # Install EPEL and multimedia packages (ffmpeg, sox)
-RUN microdnf install -y \
-    https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+# microdnf doesn't support installing from URLs, so use rpm directly
+RUN rpm -ivh https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
     && microdnf install -y ffmpeg sox \
     && microdnf clean all
 

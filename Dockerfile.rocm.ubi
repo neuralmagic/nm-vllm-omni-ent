@@ -73,8 +73,8 @@ ENV PATH=/opt/rocm/bin:$PATH
 ## System Dependencies (multimedia support for vllm-omni) #####################
 FROM rocm_base AS system-deps
 # Install EPEL and multimedia packages (ffmpeg)
-RUN microdnf install -y \
-    https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+# microdnf doesn't support installing from URLs, so use rpm directly
+RUN rpm -ivh https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
     && microdnf install -y ffmpeg \
     && microdnf clean all
 
