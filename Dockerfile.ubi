@@ -49,10 +49,11 @@ RUN microdnf install -y --nodocs \
 
 ## System Dependencies (multimedia support for vllm-omni) #####################
 FROM cuda-base AS system-deps
-# Install EPEL and multimedia packages (ffmpeg, sox)
-# microdnf doesn't support installing from URLs, so use rpm directly
-RUN rpm -ivh https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
-    && microdnf install -y ffmpeg sox \
+# libsndfile: needed by the soundfile Python package for audio I/O
+# System ffmpeg is NOT needed — imageio[ffmpeg] bundles a static binary via imageio-ffmpeg.
+# TODO: sox (for pysox/Qwen3-TTS) requires RPM Fusion libs (libmp3lame, libmad, libao) —
+#   not available in UBI/EPEL/CRB. Add when RPM Fusion or static sox is sorted out.
+RUN microdnf install -y libsndfile \
     && microdnf clean all
 
 ## Python Installer ############################################################
@@ -92,8 +93,7 @@ RUN microdnf install -y gcc git && \
 
 
 COPY LICENSE /licenses/vllm.md
-COPY examples/*.jinja /app/data/template/
-RUN mkdir -p /opt/app-root && \
+RUN mkdir -p /opt/app-root /app/data/template && \
     ln -s /app/data/template /opt/app-root/template
 # install vllm + vllm-omni (and dependencies) by running the payload script
 RUN --mount=type=cache,target=/root/.cache/uv \
