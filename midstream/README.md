@@ -18,23 +18,28 @@ Each step produces a run ID that feeds into the next step.
 
 Use the **Midstream Build** workflow from the [Actions tab](../../actions/workflows/midstream-build.yml):
 
-1. **vllm-wheel** — builds the base vLLM wheel from nm-vllm-ent. Note the run ID from the summary.
-2. **omni-wheel** — builds the vllm-omni wheel. Requires `vllm_run_id` from step 1.
-3. **docker-image** — builds the container image. Requires both `vllm_run_id` and `omni_run_id`.
+| Build Step | What It Does | Required Inputs |
+|------------|-------------|-----------------|
+| **full-chain** | Builds omni wheel, waits for it to finish, then triggers the docker image build | `vllm_run_id` (auto-resolved from mapping) |
+| **vllm-wheel** | Builds the base vLLM wheel from nm-vllm-ent | — |
+| **omni-wheel** | Builds the vllm-omni wheel | `vllm_run_id` |
+| **docker-image** | Builds the container image | `vllm_run_id` + `omni_run_id` |
 
-The workflow dispatches to nm-cicd and prints a clickable link to the triggered run in the job summary.
+Each job dispatches to nm-cicd and prints a clickable link to the triggered run in the job summary.
 
-### Tag-Based Triggers
+### Tag-Based Triggers (Full Chain)
 
-Pushing a tag matching `omni-*` automatically triggers an **omni-wheel** build. The workflow reads `midstream/vllm-version` and looks up the corresponding run ID from `midstream/vllm-wheels.yml` — no manual input needed.
+Pushing a tag matching `omni-*` runs **full-chain** automatically — omni wheel + docker image, fully hands-off. The workflow reads `midstream/vllm-version` and looks up the vLLM wheel run ID from `midstream/vllm-wheels.yml`.
 
 ```bash
-# Example: tag a commit and push to trigger a build
+# Tag and push — that's it, full build kicks off
 git tag omni-v0.20.0-rc1
 git push origin omni-v0.20.0-rc1
 ```
 
 The tag name is freeform — use whatever makes sense: `omni-v0.20.0`, `omni-doug-feature-foo`, `omni-ricky-demo-2026-05-15`, etc. The vLLM wheel version is determined by the code at the tagged commit, not the tag name.
+
+The full-chain job polls nm-cicd every 3 minutes until the omni wheel build completes (up to ~3 hours), then automatically triggers the docker image build.
 
 ## vLLM Version Mapping
 
@@ -69,13 +74,11 @@ v0.20.0:
 
 ### Default Runner Labels
 
-| Step | Default Label |
-|------|---------------|
-| vllm-wheel | `k8s-a100-build-13-0` |
-| omni-wheel | `k8s-a100-build-13-0` |
-| docker-image | `ibm-wdc-k8s-h100-dind` |
-
-Override via the `build_label` input if runner pools change.
+| Step | Default Label | Override Input |
+|------|---------------|----------------|
+| vllm-wheel | `k8s-a100-build-13-0` | `build_label_wheel` |
+| omni-wheel | `k8s-a100-build-13-0` | `build_label_wheel` |
+| docker-image | `ibm-wdc-k8s-h100-dind` | `build_label_image` |
 
 ### Manual CLI Alternative
 
