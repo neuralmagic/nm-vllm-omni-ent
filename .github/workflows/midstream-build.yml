@@ -12,6 +12,7 @@ on:
         required: true
         type: choice
         options:
+          - full-chain
           - vllm-wheel
           - omni-wheel
           - docker-image
@@ -25,11 +26,11 @@ on:
         default: "main"
         type: string
       vllm_run_id:
-        description: "Existing vLLM wheel run ID (required for omni-wheel and docker-image)"
+        description: "Existing vLLM wheel run ID (auto-resolved from mapping if empty)"
         required: false
         type: string
       omni_run_id:
-        description: "Existing omni wheel run ID (required for docker-image)"
+        description: "Existing omni wheel run ID (only for standalone docker-image step)"
         required: false
         type: string
       nm_cicd_ref:
@@ -46,8 +47,12 @@ on:
           - cuda
           - rocm
           - cpu
-      build_label:
-        description: "Override runner label (leave empty for defaults)"
+      build_label_wheel:
+        description: "Override runner label for wheel builds (leave empty for default)"
+        required: false
+        type: string
+      build_label_image:
+        description: "Override runner label for image build (leave empty for default)"
         required: false
         type: string
 
@@ -58,8 +63,22 @@ env:
   NM_CICD_REPO: neuralmagic/nm-cicd
 
 jobs:
-  trigger:
+  # ---------------------------------------------------------------------------
+  # Resolve — shared setup for all jobs
+  # ---------------------------------------------------------------------------
+  resolve:
     runs-on: ubuntu-latest
+    outputs:
+      build_step: ${{ steps.resolve.outputs.build_step }}
+      omni_ref: ${{ steps.resolve.outputs.omni_ref }}
+      vllm_ref: ${{ steps.resolve.outputs.vllm_ref }}
+      nm_cicd_ref: ${{ steps.resolve.outputs.nm_cicd_ref }}
+      target_device: ${{ steps.resolve.outputs.target_device }}
+      build_label_wheel: ${{ steps.resolve.outputs.build_label_wheel }}
+      build_label_image: ${{ steps.resolve.outputs.build_label_image }}
+      vllm_run_id: ${{ steps.resolve.outputs.vllm_run_id }}
+      omni_run_id: ${{ steps.resolve.outputs.omni_run_id }}
+      vllm_version: ${{ steps.resolve.outputs.vllm_version }}
 
     steps:
       - name: Checkout repo
@@ -71,52 +90,52 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Build step — default to omni-wheel for tag pushes
+          # Build step — default to full-chain for tag pushes
           BUILD_STEP="${{ inputs.build_step }}"
           if [[ -z "${BUILD_STEP}" ]]; then
-            BUILD_STEP="omni-wheel"
+            BUILD_STEP="full-chain"
           fi
 
-          # Omni ref — default to whatever triggered this run
           OMNI_REF="${{ inputs.omni_ref }}"
           if [[ -z "${OMNI_REF}" ]]; then
             OMNI_REF="${GITHUB_REF_NAME}"
           fi
 
-          # vLLM ref
           VLLM_REF="${{ inputs.vllm_ref }}"
           if [[ -z "${VLLM_REF}" ]]; then
             VLLM_REF="main"
           fi
 
-          # nm-cicd ref
           NM_CICD_REF="${{ inputs.nm_cicd_ref }}"
           if [[ -z "${NM_CICD_REF}" ]]; then
             NM_CICD_REF="vllm-omni-build"
           fi
 
-          # Target device
           TARGET_DEVICE="${{ inputs.target_device }}"
           if [[ -z "${TARGET_DEVICE}" ]]; then
             TARGET_DEVICE="cuda"
           fi
 
-          # Build label defaults per step
-          BUILD_LABEL="${{ inputs.build_label }}"
-          if [[ -z "${BUILD_LABEL}" ]]; then
-            case "${BUILD_STEP}" in
-              vllm-wheel|omni-wheel) BUILD_LABEL="k8s-a100-build-13-0" ;;
-              docker-image)          BUILD_LABEL="ibm-wdc-k8s-h100-dind" ;;
-            esac
+          BUILD_LABEL_WHEEL="${{ inputs.build_label_wheel }}"
+          if [[ -z "${BUILD_LABEL_WHEEL}" ]]; then
+            BUILD_LABEL_WHEEL="k8s-a100-build-13-0"
           fi
 
-          # Run IDs — resolve from mapping if not provided
+          BUILD_LABEL_IMAGE="${{ inputs.build_label_image }}"
+          if [[ -z "${BUILD_LABEL_IMAGE}" ]]; then
+            BUILD_LABEL_IMAGE="ibm-wdc-k8s-h100-dind"
+          fi
+
+          # Resolve vllm_run_id from mapping if not provided
           VLLM_RUN_ID="${{ inputs.vllm_run_id }}"
-          OMNI_RUN_ID="${{ inputs.omni_run_id }}"
+          VLLM_VERSION=""
+
+          if [[ -f midstream/vllm-version ]]; then
+            VLLM_VERSION=$(tr -d '[:space:]' < midstream/vllm-version)
+          fi
 
           if [[ -z "${VLLM_RUN_ID}" && "${BUILD_STEP}" != "vllm-wheel" ]]; then
-            if [[ -f midstream/vllm-version && -f midstream/vllm-wheels.yml ]]; then
-              VLLM_VERSION=$(tr -d '[:space:]' < midstream/vllm-version)
+            if [[ -n "${VLLM_VERSION}" && -f midstream/vllm-wheels.yml ]]; then
               VLLM_RUN_ID=$(python3 -c "
           import yaml, sys
           with open('midstream/vllm-wheels.yml') as f:
@@ -136,15 +155,19 @@ jobs:
             fi
           fi
 
+          OMNI_RUN_ID="${{ inputs.omni_run_id }}"
+
           {
             echo "build_step=${BUILD_STEP}"
             echo "omni_ref=${OMNI_REF}"
             echo "vllm_ref=${VLLM_REF}"
             echo "nm_cicd_ref=${NM_CICD_REF}"
             echo "target_device=${TARGET_DEVICE}"
-            echo "build_label=${BUILD_LABEL}"
+            echo "build_label_wheel=${BUILD_LABEL_WHEEL}"
+            echo "build_label_image=${BUILD_LABEL_IMAGE}"
             echo "vllm_run_id=${VLLM_RUN_ID}"
             echo "omni_run_id=${OMNI_RUN_ID}"
+            echo "vllm_version=${VLLM_VERSION}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Validate inputs
@@ -156,8 +179,8 @@ jobs:
           VLLM_RUN_ID="${{ steps.resolve.outputs.vllm_run_id }}"
           OMNI_RUN_ID="${{ steps.resolve.outputs.omni_run_id }}"
 
-          if [[ "${STEP}" == "omni-wheel" && -z "${VLLM_RUN_ID}" ]]; then
-            echo "::error::omni-wheel requires vllm_run_id — provide it as input or add an entry to midstream/vllm-wheels.yml"
+          if [[ "${STEP}" =~ ^(omni-wheel|full-chain)$ && -z "${VLLM_RUN_ID}" ]]; then
+            echo "::error::${STEP} requires vllm_run_id — provide it as input or add an entry to midstream/vllm-wheels.yml"
             exit 1
           fi
 
@@ -174,34 +197,21 @@ jobs:
       - name: Log request
         shell: bash
         run: |
-          STEP="${{ steps.resolve.outputs.build_step }}"
-
-          case "${STEP}" in
-            vllm-wheel)   WORKFLOW="build-whl.yml" ;;
-            omni-wheel)   WORKFLOW="build-whl.yml" ;;
-            docker-image) WORKFLOW="build-image.yml" ;;
-          esac
-
-          VLLM_VERSION=""
-          if [[ -f midstream/vllm-version ]]; then
-            VLLM_VERSION=$(tr -d '[:space:]' < midstream/vllm-version)
-          fi
-
           cat <<EOF
           ======================================
           Midstream Build Request
           ======================================
-          Build step:       ${STEP}
-          Target workflow:  ${WORKFLOW}
+          Build step:       ${{ steps.resolve.outputs.build_step }}
           Target repo:      ${NM_CICD_REPO}
           Target ref:       ${{ steps.resolve.outputs.nm_cicd_ref }}
 
           Omni repo:        ${GITHUB_REPOSITORY}
           Omni ref:         ${{ steps.resolve.outputs.omni_ref }}
           vLLM ref:         ${{ steps.resolve.outputs.vllm_ref }}
-          vLLM version:     ${VLLM_VERSION:-(not set)}
+          vLLM version:     ${{ steps.resolve.outputs.vllm_version || '(not set)' }}
           Target device:    ${{ steps.resolve.outputs.target_device }}
-          Build label:      ${{ steps.resolve.outputs.build_label }}
+          Wheel label:      ${{ steps.resolve.outputs.build_label_wheel }}
+          Image label:      ${{ steps.resolve.outputs.build_label_image }}
 
           vLLM run ID:      ${{ steps.resolve.outputs.vllm_run_id || '(n/a)' }}
           Omni run ID:      ${{ steps.resolve.outputs.omni_run_id || '(n/a)' }}
@@ -211,8 +221,16 @@ jobs:
           ======================================
           EOF
 
-      - name: Trigger vllm-wheel build
-        if: steps.resolve.outputs.build_step == 'vllm-wheel'
+  # ---------------------------------------------------------------------------
+  # vllm-wheel — build base vLLM wheel (standalone only)
+  # ---------------------------------------------------------------------------
+  vllm-wheel:
+    needs: [resolve]
+    if: needs.resolve.outputs.build_step == 'vllm-wheel'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger vLLM wheel build
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
         shell: bash
@@ -221,19 +239,90 @@ jobs:
 
           gh workflow run build-whl.yml \
             --repo "${NM_CICD_REPO}" \
-            --ref "${{ steps.resolve.outputs.nm_cicd_ref }}" \
+            --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
             -f repo=neuralmagic/nm-vllm-ent \
-            -f branch="${{ steps.resolve.outputs.vllm_ref }}" \
-            -f target_device="${{ steps.resolve.outputs.target_device }}" \
+            -f branch="${{ needs.resolve.outputs.vllm_ref }}" \
+            -f target_device="${{ needs.resolve.outputs.target_device }}" \
             -f python=3.12.5 \
-            -f build_label="${{ steps.resolve.outputs.build_label }}" \
+            -f build_label="${{ needs.resolve.outputs.build_label_wheel }}" \
             -f timeout=120 \
             -f partitions_file=neuralmagic/configs/partitions/minimal.yml
 
           echo "Triggered build-whl.yml for nm-vllm-ent"
 
-      - name: Trigger omni-wheel build
-        if: steps.resolve.outputs.build_step == 'omni-wheel'
+      - name: Poll for triggered run
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
+          echo "Polling for triggered run..."
+
+          TRIGGERED_RUN_ID=""
+          for attempt in $(seq 1 6); do
+            sleep 5
+            TRIGGERED_RUN_ID=$(gh run list \
+              --repo "${NM_CICD_REPO}" \
+              --workflow build-whl.yml \
+              --branch "${NM_CICD_REF}" \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty') || true
+
+            if [[ -n "${TRIGGERED_RUN_ID}" ]]; then
+              echo "Found run: ${TRIGGERED_RUN_ID}"
+              break
+            fi
+            echo "Attempt ${attempt}/6: not yet visible..."
+          done
+
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${TRIGGERED_RUN_ID}"
+
+          if [[ -n "${TRIGGERED_RUN_ID}" ]]; then
+            {
+              echo "## Midstream Build — vllm-wheel"
+              echo ""
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| **nm-cicd run** | [${TRIGGERED_RUN_ID}](${RUN_URL}) |"
+              echo "| **vLLM ref** | \`${{ needs.resolve.outputs.vllm_ref }}\` |"
+              echo "| **Target device** | \`${{ needs.resolve.outputs.target_device }}\` |"
+              echo "| **Requested by** | ${GITHUB_ACTOR} |"
+              echo ""
+              echo "### Next steps"
+              echo ""
+              echo "Once this run completes, trigger the **omni-wheel** step:"
+              echo "\`\`\`"
+              echo "build_step: omni-wheel"
+              echo "vllm_run_id: ${TRIGGERED_RUN_ID}"
+              echo "\`\`\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "::warning::Could not find the triggered run after 30s."
+            {
+              echo "## Midstream Build — vllm-wheel"
+              echo ""
+              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # omni-wheel — build vllm-omni wheel
+  # Runs standalone (omni-wheel) or as first step of full-chain
+  # ---------------------------------------------------------------------------
+  omni-wheel:
+    needs: [resolve]
+    if: >-
+      needs.resolve.outputs.build_step == 'omni-wheel' ||
+      needs.resolve.outputs.build_step == 'full-chain'
+    runs-on: ubuntu-latest
+    outputs:
+      omni_run_id: ${{ steps.poll.outputs.omni_run_id }}
+
+    steps:
+      - name: Trigger omni wheel build
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
         shell: bash
@@ -242,20 +331,169 @@ jobs:
 
           gh workflow run build-whl.yml \
             --repo "${NM_CICD_REPO}" \
-            --ref "${{ steps.resolve.outputs.nm_cicd_ref }}" \
+            --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
             -f repo=neuralmagic/nm-vllm-omni-ent \
-            -f branch="${{ steps.resolve.outputs.omni_ref }}" \
-            -f target_device="${{ steps.resolve.outputs.target_device }}" \
+            -f branch="${{ needs.resolve.outputs.omni_ref }}" \
+            -f target_device="${{ needs.resolve.outputs.target_device }}" \
             -f python=3.12.5 \
-            -f build_label="${{ steps.resolve.outputs.build_label }}" \
+            -f build_label="${{ needs.resolve.outputs.build_label_wheel }}" \
             -f timeout=120 \
             -f partitions_file=neuralmagic/configs/partitions/minimal.yml \
-            -f vllm_run_id="${{ steps.resolve.outputs.vllm_run_id }}"
+            -f vllm_run_id="${{ needs.resolve.outputs.vllm_run_id }}"
 
           echo "Triggered build-whl.yml for nm-vllm-omni-ent"
 
-      - name: Trigger docker-image build
-        if: steps.resolve.outputs.build_step == 'docker-image'
+      - name: Poll for triggered run
+        id: poll
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
+          echo "Polling for triggered run..."
+
+          OMNI_RUN_ID=""
+          for attempt in $(seq 1 6); do
+            sleep 5
+            OMNI_RUN_ID=$(gh run list \
+              --repo "${NM_CICD_REPO}" \
+              --workflow build-whl.yml \
+              --branch "${NM_CICD_REF}" \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty') || true
+
+            if [[ -n "${OMNI_RUN_ID}" ]]; then
+              echo "Found run: ${OMNI_RUN_ID}"
+              break
+            fi
+            echo "Attempt ${attempt}/6: not yet visible..."
+          done
+
+          echo "omni_run_id=${OMNI_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${OMNI_RUN_ID}"
+
+          if [[ -n "${OMNI_RUN_ID}" ]]; then
+            {
+              echo "## Midstream Build — omni-wheel"
+              echo ""
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| **nm-cicd run** | [${OMNI_RUN_ID}](${RUN_URL}) |"
+              echo "| **Omni ref** | \`${{ needs.resolve.outputs.omni_ref }}\` |"
+              echo "| **vLLM run ID** | \`${{ needs.resolve.outputs.vllm_run_id }}\` |"
+              echo "| **Target device** | \`${{ needs.resolve.outputs.target_device }}\` |"
+              echo "| **Requested by** | ${GITHUB_ACTOR} |"
+            } >> "${GITHUB_STEP_SUMMARY}"
+
+            if [[ "${{ needs.resolve.outputs.build_step }}" == "omni-wheel" ]]; then
+              {
+                echo ""
+                echo "### Next steps"
+                echo ""
+                echo "Once this run completes, trigger the **docker-image** step:"
+                echo "\`\`\`"
+                echo "build_step: docker-image"
+                echo "vllm_run_id: ${{ needs.resolve.outputs.vllm_run_id }}"
+                echo "omni_run_id: ${OMNI_RUN_ID}"
+                echo "\`\`\`"
+              } >> "${GITHUB_STEP_SUMMARY}"
+            else
+              {
+                echo ""
+                echo "> Full-chain mode: waiting for this run to complete, then triggering docker-image automatically."
+              } >> "${GITHUB_STEP_SUMMARY}"
+            fi
+          else
+            echo "::warning::Could not find the triggered run after 30s."
+            {
+              echo "## Midstream Build — omni-wheel"
+              echo ""
+              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Wait for omni wheel to complete
+        if: needs.resolve.outputs.build_step == 'full-chain' && steps.poll.outputs.omni_run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OMNI_RUN_ID="${{ steps.poll.outputs.omni_run_id }}"
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${OMNI_RUN_ID}"
+          echo "Waiting for omni wheel build ${OMNI_RUN_ID} to complete..."
+          echo "Run: ${RUN_URL}"
+
+          MAX_ATTEMPTS=60  # ~3 hours at 3-min intervals
+          for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
+            STATUS=$(gh run view "${OMNI_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json status,conclusion \
+              --jq '.status') || true
+
+            CONCLUSION=$(gh run view "${OMNI_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json conclusion \
+              --jq '.conclusion') || true
+
+            echo "[$(date -u +%H:%M:%S)] Attempt ${attempt}/${MAX_ATTEMPTS}: status=${STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" == "success" ]]; then
+                echo "Omni wheel build completed successfully!"
+                break
+              else
+                echo "::error::Omni wheel build finished with conclusion: ${CONCLUSION}"
+                echo "See: ${RUN_URL}"
+                exit 1
+              fi
+            fi
+
+            sleep 180  # 3 minutes between polls
+          done
+
+          if [[ "${STATUS}" != "completed" ]]; then
+            echo "::error::Timed out waiting for omni wheel build after ~3 hours"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # docker-image — build container image
+  # Runs standalone (docker-image) or as second step of full-chain
+  # ---------------------------------------------------------------------------
+  docker-image:
+    needs: [resolve, omni-wheel]
+    if: >-
+      always() && (
+        (needs.resolve.outputs.build_step == 'docker-image') ||
+        (needs.resolve.outputs.build_step == 'full-chain' && needs.omni-wheel.result == 'success')
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve omni run ID
+        id: image-inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # For full-chain, use the omni-wheel job output
+          # For standalone docker-image, use the input
+          OMNI_RUN_ID="${{ needs.omni-wheel.outputs.omni_run_id || needs.resolve.outputs.omni_run_id }}"
+
+          if [[ -z "${OMNI_RUN_ID}" ]]; then
+            echo "::error::No omni_run_id available — omni-wheel job may have failed to detect the run"
+            exit 1
+          fi
+
+          echo "omni_run_id=${OMNI_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Trigger docker image build
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
         shell: bash
@@ -264,13 +502,13 @@ jobs:
 
           gh workflow run build-image.yml \
             --repo "${NM_CICD_REPO}" \
-            --ref "${{ steps.resolve.outputs.nm_cicd_ref }}" \
+            --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
             -f repo=neuralmagic/nm-vllm-omni-ent \
-            -f branch="${{ steps.resolve.outputs.omni_ref }}" \
-            -f target_device="${{ steps.resolve.outputs.target_device }}" \
-            -f build_label="${{ steps.resolve.outputs.build_label }}" \
-            -f run_id="${{ steps.resolve.outputs.omni_run_id }}" \
-            -f vllm_run_id="${{ steps.resolve.outputs.vllm_run_id }}"
+            -f branch="${{ needs.resolve.outputs.omni_ref }}" \
+            -f target_device="${{ needs.resolve.outputs.target_device }}" \
+            -f build_label="${{ needs.resolve.outputs.build_label_image }}" \
+            -f run_id="${{ steps.image-inputs.outputs.omni_run_id }}" \
+            -f vllm_run_id="${{ needs.resolve.outputs.vllm_run_id }}"
 
           echo "Triggered build-image.yml for nm-vllm-omni-ent"
 
@@ -281,81 +519,49 @@ jobs:
         run: |
           set -euo pipefail
 
-          STEP="${{ steps.resolve.outputs.build_step }}"
-          NM_CICD_REF="${{ steps.resolve.outputs.nm_cicd_ref }}"
+          NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
+          echo "Polling for triggered image build run..."
 
-          case "${STEP}" in
-            vllm-wheel|omni-wheel) WORKFLOW="build-whl.yml" ;;
-            docker-image)          WORKFLOW="build-image.yml" ;;
-          esac
-
-          echo "Polling for triggered run (workflow=${WORKFLOW}, branch=${NM_CICD_REF})..."
-
-          TRIGGERED_RUN_ID=""
-          for attempt in 1 2 3 4 5 6; do
+          IMAGE_RUN_ID=""
+          for attempt in $(seq 1 6); do
             sleep 5
-            TRIGGERED_RUN_ID=$(gh run list \
+            IMAGE_RUN_ID=$(gh run list \
               --repo "${NM_CICD_REPO}" \
-              --workflow "${WORKFLOW}" \
+              --workflow build-image.yml \
               --branch "${NM_CICD_REF}" \
               --limit 1 \
-              --json databaseId,status,createdAt \
+              --json databaseId \
               --jq '.[0].databaseId // empty') || true
 
-            if [[ -n "${TRIGGERED_RUN_ID}" ]]; then
-              echo "Found run: ${TRIGGERED_RUN_ID}"
+            if [[ -n "${IMAGE_RUN_ID}" ]]; then
+              echo "Found run: ${IMAGE_RUN_ID}"
               break
             fi
-            echo "Attempt ${attempt}/6: run not yet visible, retrying..."
+            echo "Attempt ${attempt}/6: not yet visible..."
           done
 
-          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${TRIGGERED_RUN_ID}"
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${IMAGE_RUN_ID}"
 
-          if [[ -n "${TRIGGERED_RUN_ID}" ]]; then
-            echo "nm_cicd_run_id=${TRIGGERED_RUN_ID}" >> "${GITHUB_OUTPUT}"
-
+          if [[ -n "${IMAGE_RUN_ID}" ]]; then
             {
-              echo "## Midstream Build — ${STEP}"
+              echo "## Midstream Build — docker-image"
               echo ""
               echo "| Field | Value |"
               echo "|-------|-------|"
-              echo "| **Build step** | \`${STEP}\` |"
-              echo "| **nm-cicd run** | [${TRIGGERED_RUN_ID}](${RUN_URL}) |"
-              echo "| **Omni ref** | \`${{ steps.resolve.outputs.omni_ref }}\` |"
-              echo "| **Target device** | \`${{ steps.resolve.outputs.target_device }}\` |"
+              echo "| **nm-cicd run** | [${IMAGE_RUN_ID}](${RUN_URL}) |"
+              echo "| **Omni ref** | \`${{ needs.resolve.outputs.omni_ref }}\` |"
+              echo "| **Omni run ID** | \`${{ steps.image-inputs.outputs.omni_run_id }}\` |"
+              echo "| **vLLM run ID** | \`${{ needs.resolve.outputs.vllm_run_id }}\` |"
+              echo "| **Target device** | \`${{ needs.resolve.outputs.target_device }}\` |"
               echo "| **Requested by** | ${GITHUB_ACTOR} |"
               echo ""
-              echo "### Next steps"
-              echo ""
-              case "${STEP}" in
-                vllm-wheel)
-                  echo "Once this run completes, trigger the **omni-wheel** step:"
-                  echo "\`\`\`"
-                  echo "build_step: omni-wheel"
-                  echo "vllm_run_id: ${TRIGGERED_RUN_ID}"
-                  echo "\`\`\`"
-                  ;;
-                omni-wheel)
-                  echo "Once this run completes, trigger the **docker-image** step:"
-                  echo "\`\`\`"
-                  echo "build_step: docker-image"
-                  echo "vllm_run_id: ${{ steps.resolve.outputs.vllm_run_id }}"
-                  echo "omni_run_id: ${TRIGGERED_RUN_ID}"
-                  echo "\`\`\`"
-                  ;;
-                docker-image)
-                  echo "Image build triggered. Watch the nm-cicd run for the resulting image tag."
-                  ;;
-              esac
+              echo "Image build triggered. Watch the nm-cicd run for the resulting image tag."
             } >> "${GITHUB_STEP_SUMMARY}"
           else
-            echo "::warning::Could not find the triggered run after 30s. Check nm-cicd Actions manually: https://github.com/${NM_CICD_REPO}/actions"
-
+            echo "::warning::Could not find the triggered run after 30s."
             {
-              echo "## Midstream Build — ${STEP}"
+              echo "## Midstream Build — docker-image"
               echo ""
-              echo "> **Warning:** Could not detect the triggered run ID. The workflow was dispatched but the run was not visible within 30 seconds."
-              echo ""
-              echo "Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
+              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
             } >> "${GITHUB_STEP_SUMMARY}"
           fi
