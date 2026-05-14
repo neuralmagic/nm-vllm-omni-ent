@@ -26,7 +26,46 @@ The workflow dispatches to nm-cicd and prints a clickable link to the triggered 
 
 ### Tag-Based Triggers
 
-Pushing a tag matching `omni-*` automatically triggers an **omni-wheel** build. You must provide `vllm_run_id` for this to work — use a manual dispatch instead if you don't have an existing vLLM wheel run.
+Pushing a tag matching `omni-*` automatically triggers an **omni-wheel** build. The workflow reads `midstream/vllm-version` and looks up the corresponding run ID from `midstream/vllm-wheels.yml` — no manual input needed.
+
+```bash
+# Example: tag a commit and push to trigger a build
+git tag omni-v0.20.0-rc1
+git push origin omni-v0.20.0-rc1
+```
+
+The tag name is freeform — use whatever makes sense: `omni-v0.20.0`, `omni-doug-feature-foo`, `omni-ricky-demo-2026-05-15`, etc. The vLLM wheel version is determined by the code at the tagged commit, not the tag name.
+
+## vLLM Version Mapping
+
+Two files control which vLLM wheel gets used:
+
+### `midstream/vllm-version`
+
+A single line declaring the vLLM version this omni code is built against:
+
+```
+v0.20.0
+```
+
+Update this when rebasing to a new upstream version.
+
+### `midstream/vllm-wheels.yml`
+
+Maps vLLM versions to known-good wheel build run IDs:
+
+```yaml
+v0.20.0:
+  run_id: "25021945246"
+  branch: "main"
+  note: "reused from deepseek effort, built 2026-05-10"
+```
+
+**When to update:**
+- **New vLLM version:** after rebasing upstream, update `vllm-version` and add a new entry to `vllm-wheels.yml` once you've built a wheel for it
+- **New wheel for existing version:** update the `run_id` for that version entry
+
+**How the workflow uses it:** when `vllm_run_id` is not provided as input (including all tag-push triggers), the workflow reads `vllm-version`, looks up the run ID from `vllm-wheels.yml`, and uses it automatically. If you provide `vllm_run_id` explicitly, it overrides the mapping.
 
 ### Default Runner Labels
 

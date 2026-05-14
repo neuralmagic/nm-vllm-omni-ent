@@ -62,6 +62,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Resolve inputs
         id: resolve
         shell: bash
@@ -107,9 +110,31 @@ jobs:
             esac
           fi
 
-          # Run IDs
+          # Run IDs — resolve from mapping if not provided
           VLLM_RUN_ID="${{ inputs.vllm_run_id }}"
           OMNI_RUN_ID="${{ inputs.omni_run_id }}"
+
+          if [[ -z "${VLLM_RUN_ID}" && "${BUILD_STEP}" != "vllm-wheel" ]]; then
+            if [[ -f midstream/vllm-version && -f midstream/vllm-wheels.yml ]]; then
+              VLLM_VERSION=$(tr -d '[:space:]' < midstream/vllm-version)
+              VLLM_RUN_ID=$(python3 -c "
+          import yaml, sys
+          with open('midstream/vllm-wheels.yml') as f:
+              data = yaml.safe_load(f)
+          entry = data.get('${VLLM_VERSION}')
+          if entry and 'run_id' in entry:
+              print(entry['run_id'])
+          else:
+              sys.exit(1)
+          " 2>/dev/null) || true
+
+              if [[ -n "${VLLM_RUN_ID}" ]]; then
+                echo "Resolved vllm_run_id=${VLLM_RUN_ID} from mapping (vllm ${VLLM_VERSION})"
+              else
+                echo "::warning::Could not resolve vllm_run_id from midstream/vllm-wheels.yml for version ${VLLM_VERSION}"
+              fi
+            fi
+          fi
 
           {
             echo "build_step=${BUILD_STEP}"
@@ -132,12 +157,12 @@ jobs:
           OMNI_RUN_ID="${{ steps.resolve.outputs.omni_run_id }}"
 
           if [[ "${STEP}" == "omni-wheel" && -z "${VLLM_RUN_ID}" ]]; then
-            echo "::error::omni-wheel requires vllm_run_id (the run ID of a completed vLLM wheel build)"
+            echo "::error::omni-wheel requires vllm_run_id — provide it as input or add an entry to midstream/vllm-wheels.yml"
             exit 1
           fi
 
           if [[ "${STEP}" == "docker-image" && -z "${VLLM_RUN_ID}" ]]; then
-            echo "::error::docker-image requires vllm_run_id"
+            echo "::error::docker-image requires vllm_run_id — provide it as input or add an entry to midstream/vllm-wheels.yml"
             exit 1
           fi
 
@@ -157,6 +182,11 @@ jobs:
             docker-image) WORKFLOW="build-image.yml" ;;
           esac
 
+          VLLM_VERSION=""
+          if [[ -f midstream/vllm-version ]]; then
+            VLLM_VERSION=$(tr -d '[:space:]' < midstream/vllm-version)
+          fi
+
           cat <<EOF
           ======================================
           Midstream Build Request
@@ -169,6 +199,7 @@ jobs:
           Omni repo:        ${GITHUB_REPOSITORY}
           Omni ref:         ${{ steps.resolve.outputs.omni_ref }}
           vLLM ref:         ${{ steps.resolve.outputs.vllm_ref }}
+          vLLM version:     ${VLLM_VERSION:-(not set)}
           Target device:    ${{ steps.resolve.outputs.target_device }}
           Build label:      ${{ steps.resolve.outputs.build_label }}
 
