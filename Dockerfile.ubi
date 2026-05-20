@@ -49,11 +49,14 @@ RUN microdnf install -y --nodocs \
 
 ## System Dependencies (multimedia support for vllm-omni) #####################
 FROM cuda-base AS system-deps
-# libsndfile: needed by the soundfile Python package for audio I/O
-# System ffmpeg is NOT needed — imageio[ffmpeg] bundles a static binary via imageio-ffmpeg.
-# TODO: sox (for pysox/Qwen3-TTS) requires RPM Fusion libs (libmp3lame, libmad, libao) —
-#   not available in UBI/EPEL/CRB. Add when RPM Fusion or static sox is sorted out.
-RUN microdnf install -y libsndfile \
+# espeak-ng: TTS phonemizer backend (Qwen3-TTS, etc.)
+# ffmpeg: needed by some model pipelines for audio/video processing
+#   RPM Fusion is temporary for midstream/developer preview — long-term ffmpeg
+#   delivery in a productized image is out of scope for midstream.
+RUN rpm -Uvh \
+        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+        https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-9.noarch.rpm && \
+    microdnf install -y espeak-ng ffmpeg \
     && microdnf clean all
 
 ## Python Installer ############################################################
@@ -106,7 +109,9 @@ ENV HF_HUB_OFFLINE=1 \
     VLLM_USAGE_SOURCE=quay-docker-image \
     OUTLINES_CACHE_DIR=/tmp/outlines \
     NUMBA_CACHE_DIR=/tmp/numba \
-    TRITON_CACHE_DIR=/tmp/triton
+    TRITON_CACHE_DIR=/tmp/triton \
+    VLLM_CACHE_ROOT=/tmp/vllm \
+    FLASHINFER_WORKSPACE_BASE=/tmp
 
 RUN umask 0002 \
     && mkdir -p /licenses /home/vllm/.cache \
