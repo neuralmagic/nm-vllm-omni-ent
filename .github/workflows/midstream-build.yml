@@ -256,7 +256,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
+          # shellcheck disable=SC2153
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
           echo "Polling for triggered run..."
 
@@ -350,7 +350,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
+          # shellcheck disable=SC2153
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
           echo "Polling for triggered run..."
 
@@ -518,7 +518,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
+          # shellcheck disable=SC2153
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
           echo "Polling for triggered image build run..."
 
