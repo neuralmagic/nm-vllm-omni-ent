@@ -50,13 +50,9 @@ RUN microdnf install -y --nodocs \
 ## System Dependencies (multimedia support for vllm-omni) #####################
 FROM cuda-base AS system-deps
 # espeak-ng: TTS phonemizer backend (Qwen3-TTS, etc.)
-# ffmpeg: needed by some model pipelines for audio/video processing
-#   RPM Fusion is temporary for midstream/developer preview — long-term ffmpeg
-#   delivery in a productized image is out of scope for midstream.
 RUN rpm -Uvh \
-        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
-        https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-9.noarch.rpm && \
-    microdnf install -y espeak-ng ffmpeg \
+        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+    microdnf install -y espeak-ng \
     && microdnf clean all
 
 ## Python Installer ############################################################
@@ -102,6 +98,12 @@ RUN mkdir -p /opt/app-root /app/data/template && \
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,src=payload,target=/workspace/payload \
     ./payload/run.sh
+
+# ffmpeg shim: symlink imageio-ffmpeg's bundled static binary into PATH
+# so model pipelines that shell out to `ffmpeg` can find it without
+# pulling ffmpeg from an external RPM repo.
+COPY midstream/install-ffmpeg-shim.py /tmp/
+RUN python /tmp/install-ffmpeg-shim.py && rm /tmp/install-ffmpeg-shim.py
 
 ENV HF_HUB_OFFLINE=1 \
     HOME=/home/vllm \
