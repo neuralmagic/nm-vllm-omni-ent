@@ -474,6 +474,8 @@ jobs:
         (needs.resolve.outputs.build_step == 'full-chain' && needs.omni-wheel.result == 'success')
       )
     runs-on: ubuntu-latest
+    outputs:
+      image_run_id: ${{ steps.poll.outputs.image_run_id }}
 
     steps:
       - name: Resolve omni run ID
@@ -513,6 +515,7 @@ jobs:
           echo "Triggered build-image.yml for nm-vllm-omni-ent"
 
       - name: Poll for triggered run
+        id: poll
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
         shell: bash
@@ -540,6 +543,8 @@ jobs:
             echo "Attempt ${attempt}/6: not yet visible..."
           done
 
+          echo "image_run_id=${IMAGE_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
           RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${IMAGE_RUN_ID}"
 
           if [[ -n "${IMAGE_RUN_ID}" ]]; then
@@ -555,7 +560,7 @@ jobs:
               echo "| **Target device** | \`${{ needs.resolve.outputs.target_device }}\` |"
               echo "| **Requested by** | ${GITHUB_ACTOR} |"
               echo ""
-              echo "Image build triggered. Watch the nm-cicd run for the resulting image tag."
+              echo "Image build triggered. Waiting for completion..."
             } >> "${GITHUB_STEP_SUMMARY}"
           else
             echo "::warning::Could not find the triggered run after 30s."
@@ -564,4 +569,180 @@ jobs:
               echo ""
               echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
             } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Wait for image build to complete
+        if: steps.poll.outputs.image_run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_RUN_ID="${{ steps.poll.outputs.image_run_id }}"
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${IMAGE_RUN_ID}"
+          echo "Waiting for image build ${IMAGE_RUN_ID} to complete..."
+          echo "Run: ${RUN_URL}"
+
+          MAX_ATTEMPTS=40  # ~2 hours at 3-min intervals
+          STATUS=""
+          for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
+            STATUS=$(gh run view "${IMAGE_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json status \
+              --jq '.status') || true
+
+            CONCLUSION=$(gh run view "${IMAGE_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json conclusion \
+              --jq '.conclusion') || true
+
+            echo "[$(date -u +%H:%M:%S)] Attempt ${attempt}/${MAX_ATTEMPTS}: status=${STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" == "success" ]]; then
+                echo "Image build completed successfully!"
+                break
+              else
+                echo "::error::Image build finished with conclusion: ${CONCLUSION}"
+                echo "See: ${RUN_URL}"
+                exit 1
+              fi
+            fi
+
+            sleep 180
+          done
+
+          if [[ "${STATUS}" != "completed" ]]; then
+            echo "::error::Timed out waiting for image build after ~2 hours"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # smoke-test — validate the built image actually works
+  # Triggers test-vllm-omni.yml on nm-cicd after docker-image completes
+  # ---------------------------------------------------------------------------
+  smoke-test:
+    needs: [resolve, docker-image]
+    if: >-
+      needs.resolve.outputs.build_step == 'full-chain' &&
+      needs.docker-image.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger smoke test
+        id: trigger
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_RUN_ID="${{ needs.docker-image.outputs.image_run_id }}"
+          TARGET_DEVICE="${{ needs.resolve.outputs.target_device }}"
+          NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
+          VLLM_IMAGE="quay.io/vllm/automation-vllm-omni:${TARGET_DEVICE}-${IMAGE_RUN_ID}"
+
+          echo "Triggering smoke test for image: ${VLLM_IMAGE}"
+
+          gh workflow run test-vllm-omni.yml \
+            --repo "${NM_CICD_REPO}" \
+            --ref "${NM_CICD_REF}" \
+            -f vllm_image="${VLLM_IMAGE}" \
+            -f model=Tongyi-MAI/Z-Image-Turbo \
+            -f target_device="${TARGET_DEVICE}" \
+            -f label=k8s-a100-solo \
+            -f timeout=60 \
+            -f tensor_parallel_size=1
+
+          echo "vllm_image=${VLLM_IMAGE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Poll for triggered run
+        id: poll
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2153
+          NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
+          echo "Polling for triggered smoke test run..."
+
+          SMOKE_RUN_ID=""
+          for attempt in $(seq 1 6); do
+            sleep 5
+            SMOKE_RUN_ID=$(gh run list \
+              --repo "${NM_CICD_REPO}" \
+              --workflow test-vllm-omni.yml \
+              --branch "${NM_CICD_REF}" \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty') || true
+
+            if [[ -n "${SMOKE_RUN_ID}" ]]; then
+              echo "Found run: ${SMOKE_RUN_ID}"
+              break
+            fi
+            echo "Attempt ${attempt}/6: not yet visible..."
+          done
+
+          echo "smoke_run_id=${SMOKE_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Wait for smoke test to complete
+        if: steps.poll.outputs.smoke_run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SMOKE_RUN_ID="${{ steps.poll.outputs.smoke_run_id }}"
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${SMOKE_RUN_ID}"
+          echo "Waiting for smoke test ${SMOKE_RUN_ID} to complete..."
+          echo "Run: ${RUN_URL}"
+
+          MAX_ATTEMPTS=20  # ~1 hour at 3-min intervals
+          STATUS=""
+          for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
+            STATUS=$(gh run view "${SMOKE_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json status \
+              --jq '.status') || true
+
+            CONCLUSION=$(gh run view "${SMOKE_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json conclusion \
+              --jq '.conclusion') || true
+
+            echo "[$(date -u +%H:%M:%S)] Attempt ${attempt}/${MAX_ATTEMPTS}: status=${STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" == "success" ]]; then
+                echo "Smoke test passed!"
+              else
+                echo "::error::Smoke test failed with conclusion: ${CONCLUSION}"
+                echo "See: ${RUN_URL}"
+              fi
+              break
+            fi
+
+            sleep 180
+          done
+
+          if [[ "${STATUS}" != "completed" ]]; then
+            echo "::error::Timed out waiting for smoke test after ~1 hour"
+          fi
+
+          {
+            echo "## Midstream Build — smoke-test"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| **nm-cicd run** | [${SMOKE_RUN_ID}](${RUN_URL}) |"
+            echo "| **Image** | \`${{ steps.trigger.outputs.vllm_image }}\` |"
+            echo "| **Result** | ${CONCLUSION:-timeout} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ "${CONCLUSION}" != "success" ]]; then
+            exit 1
           fi
