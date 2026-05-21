@@ -108,7 +108,7 @@ jobs:
 
           NM_CICD_REF="${{ inputs.nm_cicd_ref }}"
           if [[ -z "${NM_CICD_REF}" ]]; then
-            NM_CICD_REF="vllm-omni-build"
+            NM_CICD_REF="feature/vllm-omni"
           fi
 
           TARGET_DEVICE="${{ inputs.target_device }}"
