@@ -47,16 +47,17 @@ RUN microdnf install -y --nodocs \
         cuda-cudart-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
     && microdnf clean all
 
-## System Dependencies (multimedia support for vllm-omni) #####################
-FROM cuda-base AS system-deps
-# espeak-ng: TTS phonemizer backend (Qwen3-TTS, etc.)
-RUN rpm -Uvh \
-        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
-    microdnf install -y espeak-ng \
-    && microdnf clean all
+## espeak-ng (build from source — not packaged for RHEL 9 / UBI 9) ############
+FROM base AS espeak-ng-builder
+RUN microdnf install -y gcc gcc-c++ make cmake git && \
+    git clone --depth 1 --branch 1.52.0 https://github.com/espeak-ng/espeak-ng.git /tmp/espeak-ng && \
+    cd /tmp/espeak-ng && \
+    cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local -DUSE_AUDIO=OFF -DBUILD_SHARED_LIBS=OFF && \
+    cmake --build build -j$(nproc) && \
+    cmake --install build
 
 ## Python Installer ############################################################
-FROM system-deps AS python-install
+FROM cuda-base AS python-install
 ARG PYTHON_VERSION
 ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu${CUDA_MAJOR}${CUDA_MINOR}
 ENV UV_INDEX_STRATEGY=unsafe-best-match
@@ -89,6 +90,13 @@ ENV LIBRARY_PATH="${CUDA_HOME}/lib64/stubs:/usr/lib64"
 # Triton needs a CC compiler, triton-kernels install from a git URL
 RUN microdnf install -y gcc git && \
     microdnf clean all
+
+# espeak-ng: TTS phonemizer backend (Qwen3-TTS, etc.)
+COPY --from=espeak-ng-builder /usr/local/bin/espeak-ng /usr/local/bin/
+COPY --from=espeak-ng-builder /usr/local/bin/espeak /usr/local/bin/
+COPY --from=espeak-ng-builder /usr/local/bin/speak-ng /usr/local/bin/
+COPY --from=espeak-ng-builder /usr/local/lib64/libespeak-ng.a /usr/local/lib64/
+COPY --from=espeak-ng-builder /usr/local/share/espeak-ng-data /usr/local/share/espeak-ng-data
 
 
 COPY LICENSE /licenses/vllm.md
