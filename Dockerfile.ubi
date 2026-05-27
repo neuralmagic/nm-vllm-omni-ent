@@ -145,7 +145,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         "pytest-asyncio>=0.21.0" \
         "pytest-cov>=4.0.0" \
         "pytest-mock>=3.10.0" \
-        "openai"
+        "openai" \
+        "torchmetrics"
 
 ENV HF_HUB_OFFLINE=0
 
