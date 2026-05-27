@@ -91,6 +91,21 @@ target "rocm" {
   ]
 }
 
+target "cuda-test" {
+  inherits = ["cuda"]
+  target = "vllm-omni-test"
+
+  tags = [
+    "${REPOSITORY}:${replace(VLLM_OMNI_VERSION, "+", "_")}-test",
+    "${REPOSITORY}:cuda-${GITHUB_SHA}-test",
+    "${REPOSITORY}:cuda-${GITHUB_RUN_ID}-test",
+  ]
+}
+
+group "cuda-with-test" {
+  targets = ["cuda", "cuda-test"]
+}
+
 target "cpu" {
   inherits = ["_common"]
   dockerfile = "Dockerfile.cpu.ubi"

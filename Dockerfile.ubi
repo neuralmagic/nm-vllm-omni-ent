@@ -126,3 +126,28 @@ RUN umask 0002 \
 
 # vllm-omni uses vllm entrypoint with --omni flag (matches upstream pattern)
 CMD ["vllm", "serve", "--omni"]
+
+
+## Test ########################################################################
+# Test image includes the upstream test suite so CI can run pytest directly
+# against the shipped artifact. Production image (vllm-omni-openai) is unaffected.
+# Build with: docker buildx bake cuda-test
+FROM vllm-omni-openai AS vllm-omni-test
+
+USER 0
+WORKDIR /workspace
+
+COPY tests/ /tests/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system \
+        "pytest>=7.0.0" \
+        "pytest-asyncio>=0.21.0" \
+        "pytest-cov>=4.0.0" \
+        "pytest-mock>=3.10.0" \
+        "openai"
+
+ENV HF_HUB_OFFLINE=0
+
+ENTRYPOINT []
+CMD ["pytest", "/tests/", "-v", "--co"]
