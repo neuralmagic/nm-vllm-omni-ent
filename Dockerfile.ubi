@@ -38,13 +38,18 @@ ENV CUDA_MINOR=${CUDA_MINOR}
 ENV CUDA_HOME="/usr/local/cuda-${CUDA_MAJOR}.${CUDA_MINOR}"
 ENV PATH="${CUDA_HOME}/bin:${PATH}"
 ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs/:${CUDA_HOME}/extras/CUPTI/lib64"
-# cuobjdump, nvcc, and nvrtc and are required by deepgemm for JIT
-# cudart-devel has headers needed for apache-tvm-ffi's optional JIT torch c dlpack extension
+# CUDA JIT compilation toolchain:
+# cuobjdump, nvcc, nvrtc — deepgemm JIT
+# cudart-devel — apache-tvm-ffi JIT torch c dlpack extension
+# libcurand-devel, libcublas-devel, cuda-driver-devel — FlashInfer JIT fallback
 RUN microdnf install -y --nodocs \
         cuda-cuobjdump-${CUDA_MAJOR}-${CUDA_MINOR} \
         cuda-nvcc-${CUDA_MAJOR}-${CUDA_MINOR} \
         cuda-nvrtc-${CUDA_MAJOR}-${CUDA_MINOR} \
         cuda-cudart-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
+        libcurand-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
+        libcublas-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
+        cuda-driver-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
     && microdnf clean all
 
 ## espeak-ng (build from source — not packaged for RHEL 9 / UBI 9) ############
