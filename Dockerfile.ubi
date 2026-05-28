@@ -137,16 +137,12 @@ FROM vllm-omni-openai AS vllm-omni-test
 USER 0
 WORKDIR /workspace
 
-COPY tests/ /tests/
+COPY . .
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system \
-        "pytest>=7.0.0" \
-        "pytest-asyncio>=0.21.0" \
-        "pytest-cov>=4.0.0" \
-        "pytest-mock>=3.10.0" \
-        "openai" \
-        "torchmetrics"
+    uv pip install --system ".[dev]"
+
+RUN ln -sf /workspace/tests /tests
 
 ENV HF_HUB_OFFLINE=0
 
