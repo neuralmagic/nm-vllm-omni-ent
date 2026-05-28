@@ -59,6 +59,7 @@ group "default" {
 target "cuda" {
   inherits = ["_common"]
   dockerfile = "Dockerfile.ubi"
+  target = "vllm-omni-openai"
 
   args = {
     PYTHON_VERSION = "${PYTHON_VERSION}"
