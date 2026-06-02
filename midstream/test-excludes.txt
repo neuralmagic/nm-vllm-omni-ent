@@ -1,0 +1,9 @@
+# Packages excluded from the test image on UBI 9 (glibc 2.34 / manylinux_2_34).
+# Used with `uv pip install --excludes` to drop packages that don't ship
+# wheels compatible with UBI 9's glibc version.
+#
+# Add entries when an upstream package only has manylinux_2_35+ wheels.
+
+# mooncake-transfer-engine-cuda13 only ships manylinux_2_35+ wheels.
+# Not needed for our test suite — it's a distributed transfer engine.
+mooncake-transfer-engine-cuda13

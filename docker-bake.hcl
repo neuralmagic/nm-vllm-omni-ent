@@ -59,6 +59,7 @@ group "default" {
 target "cuda" {
   inherits = ["_common"]
   dockerfile = "Dockerfile.ubi"
+  target = "vllm-omni-openai"
 
   args = {
     PYTHON_VERSION = "${PYTHON_VERSION}"
@@ -104,6 +105,24 @@ target "cuda-test" {
 
 group "cuda-with-test" {
   targets = ["cuda", "cuda-test"]
+}
+
+target "cuda-develsdk" {
+  inherits = ["cuda"]
+
+  args = {
+    PYTHON_VERSION = "${PYTHON_VERSION}"
+    CUDA_MAJOR = "13"
+    CUDA_MINOR = "0"
+    INSTALL_CUDA_DEVEL = "true"
+  }
+
+  tags = [
+    "${REPOSITORY}:cuda-develsdk-${replace(VLLM_OMNI_VERSION, "+", "_")}",
+    "${REPOSITORY}:cuda-develsdk-${GITHUB_SHA}",
+    "${REPOSITORY}:cuda-develsdk-${GITHUB_RUN_ID}",
+    RELEASE_IMAGE ? "quay.io/vllm/vllm-omni-cuda-develsdk:${replace(VLLM_OMNI_VERSION, "+", "_")}" : ""
+  ]
 }
 
 target "cpu" {

@@ -38,8 +38,9 @@ ENV CUDA_MINOR=${CUDA_MINOR}
 ENV CUDA_HOME="/usr/local/cuda-${CUDA_MAJOR}.${CUDA_MINOR}"
 ENV PATH="${CUDA_HOME}/bin:${PATH}"
 ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs/:${CUDA_HOME}/extras/CUPTI/lib64"
-# cuobjdump, nvcc, and nvrtc and are required by deepgemm for JIT
-# cudart-devel has headers needed for apache-tvm-ffi's optional JIT torch c dlpack extension
+# Core CUDA JIT compilation toolchain (always needed):
+# cuobjdump, nvcc, nvrtc — deepgemm JIT
+# cudart-devel — apache-tvm-ffi JIT torch c dlpack extension
 RUN microdnf install -y --nodocs \
         cuda-cuobjdump-${CUDA_MAJOR}-${CUDA_MINOR} \
         cuda-nvcc-${CUDA_MAJOR}-${CUDA_MINOR} \
@@ -75,6 +76,7 @@ RUN microdnf install -y \
 ## Release #####################################################################
 FROM python-install AS vllm-omni-openai
 ARG PYTHON_VERSION
+ARG INSTALL_CUDA_DEVEL=false
 
 WORKDIR /workspace
 
@@ -90,6 +92,16 @@ ENV LIBRARY_PATH="${CUDA_HOME}/lib64/stubs:/usr/lib64"
 # Triton needs a CC compiler, triton-kernels install from a git URL
 RUN microdnf install -y gcc git && \
     microdnf clean all
+
+# FlashInfer JIT fallback packages (cuda-develsdk variant only).
+# Installed here (not in cuda-base) so earlier stages cache-hit across variants.
+RUN if [ "$INSTALL_CUDA_DEVEL" = "true" ]; then \
+        microdnf install -y --nodocs \
+            libcurand-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
+            libcublas-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
+            cuda-driver-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
+        && microdnf clean all; \
+    fi
 
 # espeak-ng: TTS phonemizer backend (Qwen3-TTS, etc.)
 COPY --from=espeak-ng-builder /usr/local/bin/espeak-ng /usr/local/bin/
@@ -140,7 +152,7 @@ WORKDIR /workspace
 COPY . .
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system ".[dev]"
+    uv pip install --system --excludes midstream/test-excludes.txt ".[dev]"
 
 RUN ln -sf /workspace/tests /tests
 
