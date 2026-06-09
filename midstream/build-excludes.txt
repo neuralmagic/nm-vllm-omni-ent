@@ -1,0 +1,6 @@
+# Packages excluded from the build
+# Dynamically read in by the setup script
+
+# fa3-fwd cannot be built from source and cannot be included in shipped products
+# Removing fa3-fwd has no impact as flash attention is used as a fall back when it is not available
+fa3-fwd

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from setuptools import setup
 from setuptools_scm import get_version
-
+from packaging.requirements import Requirement
 
 def uninstall_onnxruntime() -> None:
     """
@@ -224,7 +224,7 @@ def get_install_requires() -> list[str]:
     Returns:
         List of requirement strings for the detected platform
     """
-    device = detect_target_device()
+    device = "cuda"
     requirements_dir = Path(__file__).parent / "requirements"
     requirements_file = requirements_dir / f"{device}.txt"
 
@@ -238,13 +238,25 @@ def get_install_requires() -> list[str]:
 
     return requirements
 
+def filter_requirements(requirements, exclude) -> list[str]:
+    filtered_requirements = []
+
+    for req in requirements:
+        req_obj = Requirement(req)
+        if req_obj.name not in exclude:
+            filtered_requirements.append(req)
+
+    return filtered_requirements
+
 
 if __name__ == "__main__":
     # Get platform-specific dependencies
     install_requires = get_install_requires()
+    excluded_dependencies = load_requirements(Path(__file__).parent / "midstream/build-excludes.txt")
+    approved_install_requires = filter_requirements(install_requires, excluded_dependencies)
 
     # Setup configuration
     setup(
         version=get_vllm_omni_version(),
-        install_requires=install_requires,
+        install_requires=approved_install_requires,
     )
