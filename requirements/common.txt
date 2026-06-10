@@ -1,5 +1,5 @@
 # Common dependencies for all platforms
-av>=14.0.0
+av>=13.1.0
 omegaconf>=2.3.0
 diffusers==0.38.0
 safetensors>=0.8.0rc0
