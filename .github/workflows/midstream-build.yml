@@ -36,7 +36,7 @@ on:
       nm_cicd_ref:
         description: "nm-cicd branch to run workflow from"
         required: false
-        default: "vllm-omni-build"
+        default: "feature/vllm-omni"
         type: string
       target_device:
         description: "Target device"
