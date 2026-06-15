@@ -104,7 +104,7 @@ target "cuda-test" {
 }
 
 group "cuda-with-test" {
-  targets = ["cuda", "cuda-test"]
+  targets = ["cuda", "cuda-test", "cuda-develsdk"]
 }
 
 target "cuda-develsdk" {
