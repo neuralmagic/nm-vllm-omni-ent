@@ -1,3 +1,8 @@
+v0.23.0:
+  run_id: "27551614162"
+  branch: "doug/v0.23.0"
+  note: "v0.23.0 wheel, built 2026-06-15 for INFERENG-7911"
+
 v0.21.0:
   run_id: "26183985711"
   branch: "main"
