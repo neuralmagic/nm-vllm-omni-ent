@@ -656,11 +656,29 @@ jobs:
           - model: black-forest-labs/FLUX.1-schnell
             validation_type: image_gen
             variant: cuda
-            label_suffix: flux-cuda
+            label_suffix: flux1-cuda
           - model: black-forest-labs/FLUX.1-schnell
             validation_type: image_gen
             variant: cuda-develsdk
-            label_suffix: flux-devsdk
+            label_suffix: flux1-devsdk
+          - model: black-forest-labs/FLUX.2-klein-4B
+            validation_type: image_gen
+            variant: cuda
+            label_suffix: flux2klein-cuda
+          - model: black-forest-labs/FLUX.2-klein-4B
+            validation_type: image_gen
+            variant: cuda-develsdk
+            label_suffix: flux2klein-devsdk
+          - model: black-forest-labs/FLUX.2-dev
+            validation_type: image_gen
+            variant: cuda
+            label_suffix: flux2dev-cuda
+            tensor_parallel_size: "2"
+          - model: black-forest-labs/FLUX.2-dev
+            validation_type: image_gen
+            variant: cuda-develsdk
+            label_suffix: flux2dev-devsdk
+            tensor_parallel_size: "2"
           - model: mistralai/Voxtral-Mini-3B-2507
             validation_type: tts
             variant: cuda
@@ -701,7 +719,7 @@ jobs:
             -f validation_type="${{ matrix.validation_type }}" \
             -f label=ibm-wdc-k8s-h100-util \
             -f timeout=60 \
-            -f tensor_parallel_size=1
+            -f tensor_parallel_size=${{ matrix.tensor_parallel_size || '1' }}
 
           echo "vllm_image=${VLLM_IMAGE}" >> "${GITHUB_OUTPUT}"
 
