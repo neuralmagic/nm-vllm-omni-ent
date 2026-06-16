@@ -653,6 +653,22 @@ jobs:
             validation_type: tts
             variant: cuda-develsdk
             label_suffix: tts-devsdk
+          - model: black-forest-labs/FLUX.1-schnell
+            validation_type: image_gen
+            variant: cuda
+            label_suffix: flux-cuda
+          - model: black-forest-labs/FLUX.1-schnell
+            validation_type: image_gen
+            variant: cuda-develsdk
+            label_suffix: flux-devsdk
+          - model: mistralai/Voxtral-Mini-3B-2507
+            validation_type: tts
+            variant: cuda
+            label_suffix: voxtral-cuda
+          - model: mistralai/Voxtral-Mini-3B-2507
+            validation_type: tts
+            variant: cuda-develsdk
+            label_suffix: voxtral-devsdk
     name: "smoke-test (${{ matrix.label_suffix }})"
 
     steps:
