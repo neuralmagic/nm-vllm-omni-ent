@@ -496,30 +496,27 @@ jobs:
           echo "omni_run_id=${OMNI_RUN_ID}" >> "${GITHUB_OUTPUT}"
 
       - name: Trigger docker image build
+        id: trigger
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
         shell: bash
         run: |
           set -euo pipefail
 
-          TARGET_DEVICE="${{ needs.resolve.outputs.target_device }}"
-          if [[ "${TARGET_DEVICE}" == "cuda" ]]; then
-            BAKE_TARGET="cuda-with-test"
-          else
-            BAKE_TARGET="${TARGET_DEVICE}"
-          fi
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "before_ts=${BEFORE_TS}" >> "${GITHUB_OUTPUT}"
 
           gh workflow run build-image.yml \
             --repo "${NM_CICD_REPO}" \
             --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
             -f repo=neuralmagic/nm-vllm-omni-ent \
             -f branch="${{ needs.resolve.outputs.omni_ref }}" \
-            -f target_device="${BAKE_TARGET}" \
+            -f target_device="${{ needs.resolve.outputs.target_device }}" \
             -f build_label="${{ needs.resolve.outputs.build_label_image }}" \
             -f run_id="${{ steps.image-inputs.outputs.omni_run_id }}" \
             -f vllm_run_id="${{ needs.resolve.outputs.vllm_run_id }}"
 
-          echo "Triggered build-image.yml with bake target: ${BAKE_TARGET}"
+          echo "Triggered build-image.yml for nm-vllm-omni-ent"
 
       - name: Poll for triggered run
         id: poll
@@ -528,9 +525,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # shellcheck disable=SC2153
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
-          echo "Polling for triggered image build run..."
+          BEFORE_TS="${{ steps.trigger.outputs.before_ts }}"
+          echo "Polling for image build run created after ${BEFORE_TS}..."
 
           IMAGE_RUN_ID=""
           for attempt in $(seq 1 6); do
@@ -539,9 +536,9 @@ jobs:
               --repo "${NM_CICD_REPO}" \
               --workflow build-image.yml \
               --branch "${NM_CICD_REF}" \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId // empty') || true
+              --limit 5 \
+              --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt > \"${BEFORE_TS}\")] | sort_by(.createdAt) | first | .databaseId // empty") || true
 
             if [[ -n "${IMAGE_RUN_ID}" ]]; then
               echo "Found run: ${IMAGE_RUN_ID}"
@@ -626,8 +623,9 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # smoke-test — validate the built image actually works
-  # Triggers test-vllm-omni.yml on nm-cicd after docker-image completes
+  # smoke-test — validate built images across models and CUDA variants
+  # Triggers test-vllm-omni.yml on nm-cicd after docker-image completes.
+  # Single bake group produces cuda + cuda-develsdk tags from one IMAGE_RUN_ID.
   # ---------------------------------------------------------------------------
   smoke-test:
     needs: [resolve, docker-image]
@@ -635,6 +633,27 @@ jobs:
       needs.resolve.outputs.build_step == 'full-chain' &&
       needs.docker-image.result == 'success'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - model: Tongyi-MAI/Z-Image-Turbo
+            validation_type: image_gen
+            variant: cuda
+            label_suffix: img-cuda
+          - model: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+            validation_type: tts
+            variant: cuda
+            label_suffix: tts-cuda
+          - model: Tongyi-MAI/Z-Image-Turbo
+            validation_type: image_gen
+            variant: cuda-develsdk
+            label_suffix: img-devsdk
+          - model: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+            validation_type: tts
+            variant: cuda-develsdk
+            label_suffix: tts-devsdk
+    name: "smoke-test (${{ matrix.label_suffix }})"
 
     steps:
       - name: Trigger smoke test
@@ -646,19 +665,25 @@ jobs:
           set -euo pipefail
 
           IMAGE_RUN_ID="${{ needs.docker-image.outputs.image_run_id }}"
-          TARGET_DEVICE="${{ needs.resolve.outputs.target_device }}"
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
-          VLLM_IMAGE="quay.io/vllm/automation-vllm-omni:${TARGET_DEVICE}-${IMAGE_RUN_ID}"
+          VLLM_IMAGE="quay.io/vllm/automation-vllm-omni:${{ matrix.variant }}-${IMAGE_RUN_ID}"
 
-          echo "Triggering smoke test for image: ${VLLM_IMAGE}"
+          echo "Triggering smoke test:"
+          echo "  Image: ${VLLM_IMAGE}"
+          echo "  Model: ${{ matrix.model }}"
+          echo "  Validation: ${{ matrix.validation_type }}"
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "before_ts=${BEFORE_TS}" >> "${GITHUB_OUTPUT}"
 
           gh workflow run test-vllm-omni.yml \
             --repo "${NM_CICD_REPO}" \
             --ref "${NM_CICD_REF}" \
             -f vllm_image="${VLLM_IMAGE}" \
-            -f model=Tongyi-MAI/Z-Image-Turbo \
-            -f target_device="${TARGET_DEVICE}" \
-            -f label=k8s-a100-solo \
+            -f model="${{ matrix.model }}" \
+            -f target_device=cuda \
+            -f validation_type="${{ matrix.validation_type }}" \
+            -f label=ibm-wdc-k8s-h100-util \
             -f timeout=60 \
             -f tensor_parallel_size=1
 
@@ -671,9 +696,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # shellcheck disable=SC2153
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
-          echo "Polling for triggered smoke test run..."
+          BEFORE_TS="${{ steps.trigger.outputs.before_ts }}"
+          echo "Polling for smoke test run created after ${BEFORE_TS}..."
 
           SMOKE_RUN_ID=""
           for attempt in $(seq 1 6); do
@@ -682,9 +707,9 @@ jobs:
               --repo "${NM_CICD_REPO}" \
               --workflow test-vllm-omni.yml \
               --branch "${NM_CICD_REF}" \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId // empty') || true
+              --limit 5 \
+              --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt > \"${BEFORE_TS}\")] | sort_by(.createdAt) | first | .databaseId // empty") || true
 
             if [[ -n "${SMOKE_RUN_ID}" ]]; then
               echo "Found run: ${SMOKE_RUN_ID}"
@@ -741,12 +766,14 @@ jobs:
           fi
 
           {
-            echo "## Midstream Build — smoke-test"
+            echo "## Midstream Build — smoke-test (${{ matrix.label_suffix }})"
             echo ""
             echo "| Field | Value |"
             echo "|-------|-------|"
             echo "| **nm-cicd run** | [${SMOKE_RUN_ID}](${RUN_URL}) |"
             echo "| **Image** | \`${{ steps.trigger.outputs.vllm_image }}\` |"
+            echo "| **Model** | ${{ matrix.model }} |"
+            echo "| **Validation** | ${{ matrix.validation_type }} |"
             echo "| **Result** | ${CONCLUSION:-timeout} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
