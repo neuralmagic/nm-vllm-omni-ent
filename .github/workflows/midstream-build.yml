@@ -645,6 +645,7 @@ jobs:
             validation_type: tts
             variant: cuda
             label_suffix: tts-cuda
+            tts_voice: vivian
           - model: Tongyi-MAI/Z-Image-Turbo
             validation_type: image_gen
             variant: cuda-develsdk
@@ -653,6 +654,7 @@ jobs:
             validation_type: tts
             variant: cuda-develsdk
             label_suffix: tts-devsdk
+            tts_voice: vivian
           - model: black-forest-labs/FLUX.1-schnell
             validation_type: image_gen
             variant: cuda
@@ -683,10 +685,12 @@ jobs:
             validation_type: tts
             variant: cuda
             label_suffix: voxtral-cuda
+            tts_voice: neutral_female
           - model: mistralai/Voxtral-4B-TTS-2603
             validation_type: tts
             variant: cuda-develsdk
             label_suffix: voxtral-devsdk
+            tts_voice: neutral_female
     name: "smoke-test (${{ matrix.label_suffix }})"
 
     steps:
@@ -719,7 +723,8 @@ jobs:
             -f validation_type="${{ matrix.validation_type }}" \
             -f label=ibm-wdc-k8s-h100-util \
             -f timeout=60 \
-            -f tensor_parallel_size=${{ matrix.tensor_parallel_size || '1' }}
+            -f tensor_parallel_size=${{ matrix.tensor_parallel_size || '1' }} \
+            -f tts_voice=${{ matrix.tts_voice || '' }}
 
           echo "vllm_image=${VLLM_IMAGE}" >> "${GITHUB_OUTPUT}"
 
