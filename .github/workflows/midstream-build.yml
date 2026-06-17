@@ -691,6 +691,16 @@ jobs:
             variant: cuda-develsdk
             label_suffix: voxtral-devsdk
             tts_voice: neutral_female
+          - model: Qwen/Qwen3-Omni-30B-A3B-Instruct
+            validation_type: chat
+            variant: cuda
+            label_suffix: qwen3omni-cuda
+            gpu_count: "2"
+          - model: Qwen/Qwen3-Omni-30B-A3B-Instruct
+            validation_type: chat
+            variant: cuda-develsdk
+            label_suffix: qwen3omni-devsdk
+            gpu_count: "2"
     name: "smoke-test (${{ matrix.label_suffix }})"
 
     steps:
@@ -724,6 +734,7 @@ jobs:
             -f label=ibm-wdc-k8s-h100-util \
             -f timeout=60 \
             -f tensor_parallel_size=${{ matrix.tensor_parallel_size || '1' }} \
+            -f gpu_count=${{ matrix.gpu_count || '' }} \
             -f tts_voice=${{ matrix.tts_voice || '' }}
 
           echo "vllm_image=${VLLM_IMAGE}" >> "${GITHUB_OUTPUT}"
