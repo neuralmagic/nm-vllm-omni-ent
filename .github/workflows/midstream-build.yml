@@ -679,11 +679,11 @@ jobs:
             variant: cuda-develsdk
             label_suffix: flux2dev-devsdk
             tensor_parallel_size: "2"
-          - model: mistralai/Voxtral-Mini-3B-2507
+          - model: mistralai/Voxtral-4B-TTS-2603
             validation_type: tts
             variant: cuda
             label_suffix: voxtral-cuda
-          - model: mistralai/Voxtral-Mini-3B-2507
+          - model: mistralai/Voxtral-4B-TTS-2603
             validation_type: tts
             variant: cuda-develsdk
             label_suffix: voxtral-devsdk
