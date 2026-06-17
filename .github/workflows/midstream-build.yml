@@ -506,6 +506,11 @@ jobs:
           BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           echo "before_ts=${BEFORE_TS}" >> "${GITHUB_OUTPUT}"
 
+          BAKE_TARGETS="${{ needs.resolve.outputs.target_device }}"
+          if [[ "${BAKE_TARGETS}" == "cuda" ]]; then
+            BAKE_TARGETS="cuda cuda-develsdk"
+          fi
+
           gh workflow run build-image.yml \
             --repo "${NM_CICD_REPO}" \
             --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
@@ -514,9 +519,10 @@ jobs:
             -f target_device="${{ needs.resolve.outputs.target_device }}" \
             -f build_label="${{ needs.resolve.outputs.build_label_image }}" \
             -f run_id="${{ steps.image-inputs.outputs.omni_run_id }}" \
-            -f vllm_run_id="${{ needs.resolve.outputs.vllm_run_id }}"
+            -f vllm_run_id="${{ needs.resolve.outputs.vllm_run_id }}" \
+            -f bake_targets="${BAKE_TARGETS}"
 
-          echo "Triggered build-image.yml for nm-vllm-omni-ent"
+          echo "Triggered build-image.yml for nm-vllm-omni-ent (bake targets: ${BAKE_TARGETS})"
 
       - name: Poll for triggered run
         id: poll
@@ -625,7 +631,8 @@ jobs:
   # ---------------------------------------------------------------------------
   # smoke-test — validate built images across models and CUDA variants
   # Triggers test-vllm-omni.yml on nm-cicd after docker-image completes.
-  # Single bake group produces cuda + cuda-develsdk tags from one IMAGE_RUN_ID.
+  # Bake builds both cuda + cuda-develsdk tags from one IMAGE_RUN_ID.
+  # Polling matches on vllm_image input to avoid race with parallel matrix jobs.
   # ---------------------------------------------------------------------------
   smoke-test:
     needs: [resolve, docker-image]
@@ -737,24 +744,34 @@ jobs:
           set -euo pipefail
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
           BEFORE_TS="${{ steps.trigger.outputs.before_ts }}"
-          echo "Polling for smoke test run created after ${BEFORE_TS}..."
+          EXPECTED_IMAGE="${{ steps.trigger.outputs.vllm_image }}"
+          MODEL="${{ matrix.model }}"
+          echo "Polling for smoke test run with image ${EXPECTED_IMAGE}..."
 
           SMOKE_RUN_ID=""
-          for attempt in $(seq 1 6); do
+          for attempt in $(seq 1 12); do
             sleep 5
-            SMOKE_RUN_ID=$(gh run list \
+
+            CANDIDATE_IDS=$(gh run list \
               --repo "${NM_CICD_REPO}" \
               --workflow test-vllm-omni.yml \
               --branch "${NM_CICD_REF}" \
-              --limit 5 \
-              --json databaseId,createdAt \
-              --jq "[.[] | select(.createdAt > \"${BEFORE_TS}\")] | sort_by(.createdAt) | first | .databaseId // empty") || true
+              --limit 20 \
+              --json databaseId,displayTitle,createdAt \
+              | jq -r --arg model "${MODEL}" --arg before "${BEFORE_TS}" \
+                '[.[] | select(.createdAt > $before and (.displayTitle | contains($model)))] | .[].databaseId') || true
 
-            if [[ -n "${SMOKE_RUN_ID}" ]]; then
-              echo "Found run: ${SMOKE_RUN_ID}"
-              break
-            fi
-            echo "Attempt ${attempt}/6: not yet visible..."
+            for CID in ${CANDIDATE_IDS}; do
+              RUN_IMAGE=$(gh api "repos/${NM_CICD_REPO}/actions/runs/${CID}" \
+                --jq '.inputs.vllm_image // empty' 2>/dev/null) || true
+              if [[ "${RUN_IMAGE}" == "${EXPECTED_IMAGE}" ]]; then
+                SMOKE_RUN_ID="${CID}"
+                echo "Found run: ${SMOKE_RUN_ID} (matched on vllm_image input)"
+                break 2
+              fi
+            done
+
+            echo "Attempt ${attempt}/12: no matching run found yet..."
           done
 
           echo "smoke_run_id=${SMOKE_RUN_ID}" >> "${GITHUB_OUTPUT}"
