@@ -508,7 +508,7 @@ jobs:
 
           BAKE_TARGETS="${{ needs.resolve.outputs.target_device }}"
           if [[ "${BAKE_TARGETS}" == "cuda" ]]; then
-            BAKE_TARGETS="cuda cuda-develsdk"
+            BAKE_TARGETS="cuda cuda-develsdk cuda-test"
           fi
 
           gh workflow run build-image.yml \
