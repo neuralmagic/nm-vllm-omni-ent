@@ -1,10 +1,13 @@
 # Some of these test are not yet included upstream 
 # TODO add the tests for Qwen/Qwen3-Omni-30B-A3B-Thinking when ready
 tests:
-  - "pytest -sv -m 'core_model and cuda'"
+  - "pytest -sv tests/diffusion tests/model_executor -m 'core_model and cuda'"
+  - "pytest -sv -m 'core_model and cpu' --ignore=tests/diffusion --ignore=tests/model_executor"
+  - "pytest -sv tests/entrypoints/ -m 'advanced_model and cuda'"
   - "pytest -sv tests/e2e/online_serving/test_qwen3_omni.py tests/e2e/online_serving/test_qwen3_omni_expansion.py tests/e2e/offline_inference/test_qwen3_omni.py --run-level 'advanced_model'"
   - "pytest -sv tests/e2e/online_serving/test_voxtral_tts.py tests/e2e/offline_inference/test_voxtral_tts.py --run-level 'advanced_model'"
   - "pytest -sv tests/e2e/online_serving/test_flux2_klein.py tests/e2e/online_serving/test_flux2_klein_expansion.py tests/e2e/offline_inference/test_flux2_klein.py --run-level 'advanced_model'"
   - "pytest -sv tests/e2e/online_serving/test_flux_2_dev_expansion.py tests/e2e/offline_inference/test_flux2_dev_text2img.py --run-level 'advanced_model'"
   - "pytest -sv tests/e2e/online_serving/test_qwen3_tts_base.py tests/e2e/online_serving/test_qwen3_tts_base_expansion.py tests/e2e/offline_inference/test_qwen3_tts_base.py --run-level 'advanced_model'"
   - "pytest -sv tests/e2e/online_serving/test_qwen3_tts_customvoice.py tests/e2e/online_serving/test_qwen3_tts_customvoice_expansion.py tests/e2e/offline_inference/test_qwen3_tts_customvoice.py --run-level 'advanced_model'"
+  - "pytest -sv tests/e2e/online_serving/test_qwen3_omni_multi_replicas.py -m 'full_model' --run-level 'core_model'"
