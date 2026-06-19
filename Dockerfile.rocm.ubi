@@ -55,7 +55,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         hiprand-devel \
         hipsolver-devel \
         hipsparse-devel \
-        hsa-rocr-devel \
+        has-rocr-devel \
         miopen-hip-devel \
         rccl-devel \
         rocblas-devel \
