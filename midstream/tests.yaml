@@ -1,4 +1,4 @@
-# Some of these test are not yet included upstream 
+# Some of these test are not yet included upstream
 # TODO add the tests for Qwen/Qwen3-Omni-30B-A3B-Thinking when ready
 tests:
   - "pytest -sv tests/diffusion tests/model_executor -m 'core_model and cuda'"
