@@ -368,6 +368,8 @@ class Krea2Pipeline(
                 positive_kwargs,
                 negative_kwargs,
             )
+            if isinstance(noise_pred, tuple):
+                noise_pred = noise_pred[0]
 
             latents_dtype = latents.dtype
             latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
