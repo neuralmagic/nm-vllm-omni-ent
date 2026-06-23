@@ -286,6 +286,11 @@ _DIFFUSION_MODELS = {
         "pipeline_dreamzero",
         "DreamZeroPipeline",
     ),
+    "Krea2Pipeline": (
+        "krea2",
+        "pipeline_krea2",
+        "Krea2Pipeline",
+    ),
 }
 
 
@@ -510,6 +515,7 @@ _DIFFUSION_POST_PROCESS_FUNCS = {
     "SenseNovaU1Pipeline": "get_sensenova_u1_post_process_func",
     "Cosmos3OmniDiffusersPipeline": "get_cosmos3_post_process_func",
     "HiDreamImagePipeline": "get_hidream_image_post_process_func",
+    "Krea2Pipeline": "get_krea2_post_process_func",
 }
 
 _DIFFUSION_ACTION_POST_PROCESS_FUNCS = {
