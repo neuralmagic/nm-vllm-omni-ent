@@ -339,7 +339,7 @@ class Krea2Pipeline(
             self._current_timestep = t
             timestep = (t / self.scheduler.config.num_train_timesteps).expand(
                 latents.shape[0]
-            ).to(latents.dtype)
+            ).to(dtype=latents.dtype, device=latents.device)
 
             positive_kwargs = {
                 "hidden_states": latents,
