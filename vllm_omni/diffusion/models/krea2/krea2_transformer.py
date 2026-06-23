@@ -90,8 +90,6 @@ class Krea2Attention(nn.Module):
 
         attn_metadata = None
         if attention_mask is not None:
-            if attention_mask.dim() == 3:
-                attention_mask = attention_mask.unsqueeze(1)
             attn_metadata = AttentionMetadata(attn_mask=attention_mask)
 
         hidden_states = self.attn(query, key, value, attn_metadata)
@@ -410,11 +408,9 @@ class Krea2Transformer2DModel(nn.Module):
         text_attention_mask = None
         attention_mask = None
         if encoder_attention_mask is not None:
-            text_attention_mask = encoder_attention_mask[:, None, None, :]
+            text_attention_mask = encoder_attention_mask
             image_mask = encoder_attention_mask.new_ones((batch_size, image_seq_len))
-            attention_mask = torch.cat([encoder_attention_mask, image_mask], dim=1)[
-                :, None, None, :
-            ]
+            attention_mask = torch.cat([encoder_attention_mask, image_mask], dim=1)
 
         encoder_hidden_states = self.text_fusion(
             encoder_hidden_states, attention_mask=text_attention_mask
