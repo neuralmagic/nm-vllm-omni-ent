@@ -55,6 +55,13 @@ class ImageGenerationRequest(BaseModel):
         description="Number of output layers for layered image models. Supported range: 3-10.",
     )
 
+    @field_validator("prompt")
+    @classmethod
+    def validate_prompt(cls, v):
+        if not v or not v.strip():
+            raise ValueError("prompt must be a non-empty string")
+        return v
+
     @field_validator("size")
     @classmethod
     def validate_size(cls, v):
