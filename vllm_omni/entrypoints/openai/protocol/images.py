@@ -120,6 +120,13 @@ class ImageGenerationRequest(BaseModel):
         """Validate the layers parameter for layered image models."""
         return validate_layered_layers(v)
 
+    @field_validator("negative_prompt", "system_prompt")
+    @classmethod
+    def validate_optional_string_fields(cls, v):
+        if v is not None and not v.strip():
+            raise ValueError("field must be a non-empty string or null")
+        return v
+
     # vllm-omni extensions for diffusion control
     negative_prompt: str | None = Field(default=None, description="Text describing what to avoid in the image")
     system_prompt: str | None = Field(
@@ -207,6 +214,14 @@ class ImageGenerationRequest(BaseModel):
         default=None,
         description="Return stage metrics for benchmark clients.",
     )
+
+    @field_validator("output_format")
+    @classmethod
+    def validate_output_format(cls, v):
+        valid = {"png", "jpeg", "webp"}
+        if v is not None and v not in valid:
+            raise ValueError(f"output_format must be one of {sorted(valid)}, got: '{v}'")
+        return v
 
 
 class ImageData(BaseModel):
