@@ -396,6 +396,15 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
         output_modalities = getattr(request, "modalities", engine_output_modalities)
         request.modalities = output_modalities if output_modalities is not None else engine_output_modalities
 
+        if not isinstance(request.modalities, list) or not all(isinstance(m, str) for m in request.modalities):
+            return self.create_error_response("'modalities' must be a list of strings.")
+        unsupported = set(request.modalities) - set(engine_output_modalities)
+        if unsupported:
+            return self.create_error_response(
+                f"Unsupported output modalities {', '.join(sorted(unsupported))} for this model. "
+                f"Supported modalities: {', '.join(sorted(engine_output_modalities))}",
+            )
+
         num_inference_steps = None
         cfg_text_scale = None
         cfg_img_scale = None
@@ -2256,10 +2265,23 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
         else:
             sample_rate = int(sr_raw)
 
+        _valid_audio_formats = {"wav", "mp3", "flac", "opus", "pcm16", "pcm"}
+        audio_params = getattr(request, "audio", None)
+        if isinstance(audio_params, dict):
+            audio_format = audio_params.get("format", "wav")
+        else:
+            audio_format = "wav"
+        if audio_format not in _valid_audio_formats:
+            return self._create_error_response(
+                f"Invalid audio format '{audio_format}'. Supported formats: {sorted(_valid_audio_formats)}",
+            )
+        if audio_format == "pcm16":
+            audio_format = "pcm"
+
         audio_obj = CreateAudio(
             audio_tensor=audio_tensor,
             sample_rate=sample_rate,
-            response_format="wav",
+            response_format=audio_format,
             speed=1.0,
             stream_format="audio",
             base64_encode=True,
