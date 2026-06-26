@@ -699,12 +699,12 @@ jobs:
             label_suffix: voxtral-devsdk
             tts_voice: neutral_female
           - model: Qwen/Qwen3-Omni-30B-A3B-Instruct
-            validation_type: chat
+            validation_type: omni
             variant: cuda
             label_suffix: qwen3omni-cuda
             gpu_count: "2"
           - model: Qwen/Qwen3-Omni-30B-A3B-Instruct
-            validation_type: chat
+            validation_type: omni
             variant: cuda-develsdk
             label_suffix: qwen3omni-devsdk
             gpu_count: "2"
