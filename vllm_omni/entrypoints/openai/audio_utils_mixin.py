@@ -53,7 +53,6 @@ class AudioMixin:
             "pcm": ("RAW", "audio/pcm", {"subtype": "PCM_16"}),
             "flac": ("FLAC", "audio/flac", {}),
             "mp3": ("MP3", "audio/mpeg", {}),
-            "aac": ("AAC", "audio/aac", {}),
             "opus": ("OGG", "audio/ogg", {"subtype": "OPUS"}),
         }
 
