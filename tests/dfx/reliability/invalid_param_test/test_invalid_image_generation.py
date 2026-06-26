@@ -13,8 +13,6 @@ from tests.helpers.runtime import OmniServer, OmniServerParams, OpenAIClientHand
 
 pytestmark = [pytest.mark.slow, pytest.mark.diffusion]
 
-_SKIP_ISSUE_3649 = pytest.mark.skip(reason="https://github.com/vllm-project/vllm-omni/issues/3649")
-
 _PARAMS = [
     pytest.param(
         OmniServerParams(model="Qwen/Qwen-Image"),
@@ -94,13 +92,11 @@ def _minimal_images_gen_json(omni_server: OmniServer) -> dict[str, object]:
             {"seed": 2**32},
             ("seed", "less_than_equal", "4294967295"),
             id="seed_above_uint32",
-            marks=_SKIP_ISSUE_3649,
         ),
         pytest.param(
             {"output_format": "gif"},
-            ("output_format", "value_error", "b64_json"),
+            ("output_format", "value_error", "png"),
             id="output_format_invalid",
-            marks=_SKIP_ISSUE_3649,
         ),
         pytest.param(
             {"vae_use_slicing": "wrong_type"},
