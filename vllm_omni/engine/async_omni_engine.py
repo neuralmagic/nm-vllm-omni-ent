@@ -33,7 +33,7 @@ from vllm.logger import init_logger
 from vllm.v1.engine import EngineCoreRequest
 from vllm.v1.engine.input_processor import InputProcessor
 
-from vllm_omni.config.stage_config import strip_parent_engine_args
+from vllm_omni.config.stage_config import StageConfigFactory, strip_parent_engine_args
 from vllm_omni.diffusion.data import DiffusionParallelConfig, parse_attention_config
 from vllm_omni.diffusion.diffusion_engine import supports_audio_output
 from vllm_omni.diffusion.inline_stage_diffusion_client import InlineStageDiffusionClient
@@ -274,6 +274,7 @@ class AsyncOmniEngine:
         transfer_emitter: Any = None,
         log_stats: bool = False,
         tokenizer: str | None = None,
+        trust_remote_code: bool = False,
         **kwargs: Any,
     ) -> None:
         self.model = model
@@ -334,6 +335,18 @@ class AsyncOmniEngine:
                 self._omni_master_address,
                 self._omni_master_port,
             )
+
+        # Stage resolution pops deploy_config, so get the pipeline endpoint
+        # restriction beforehand. TODO (Alex) make this cleaner and refactor
+        # stage config resolution to remove kwargs hacks.
+        deploy_config_path = kwargs.get("deploy_config")
+        self.endpoint_restrictions = StageConfigFactory.get_pipeline_endpoint_restrictions(
+            model=model,
+            trust_remote_code=trust_remote_code,
+            deploy_config_path=deploy_config_path,
+        )
+
+        kwargs["trust_remote_code"] = trust_remote_code
 
         self.config_path, self.stage_configs = self._resolve_stage_configs(model, kwargs)
         self._validate_single_stage_mode_replica_constraints()
