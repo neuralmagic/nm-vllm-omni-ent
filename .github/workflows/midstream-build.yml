@@ -123,7 +123,7 @@ jobs:
 
           BUILD_LABEL_IMAGE="${{ inputs.build_label_image }}"
           if [[ -z "${BUILD_LABEL_IMAGE}" ]]; then
-            BUILD_LABEL_IMAGE="ibm-wdc-k8s-h100-dind"
+            BUILD_LABEL_IMAGE="k8s-a100-util"
           fi
 
           # Resolve vllm_run_id from mapping if not provided
