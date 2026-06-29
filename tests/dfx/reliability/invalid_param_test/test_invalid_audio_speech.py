@@ -39,6 +39,7 @@ _SPEECH_BATCH_NO_CLONE_FIELDS = "__speech_batch_no_clone_fields__"
 
 pytestmark = [pytest.mark.slow, pytest.mark.tts]
 
+_SKIP_ISSUE_3649 = pytest.mark.skip(reason="https://github.com/vllm-project/vllm-omni/issues/3649")
 _L4_SPEECH_HW = hardware_marks(res={"cuda": "L4"})
 _SPEECH_SERVER_ARGS = ["--trust-remote-code", "--disable-log-stats"]
 
