@@ -162,10 +162,6 @@ def _scoped_unregister_vllm_metrics():
 
 
 _vllm_prometheus.unregister_vllm_metrics = _scoped_unregister_vllm_metrics
-_logger.warning(
-    "Monkey-patched unregister_vllm_metrics() to scope drops to non-omni vllm:* collectors. "
-    "Remove this patch once vLLM adds _STAT_LOGGER_METRIC_NAMES."
-)
 
 
 # Patch: add qwen3_omni_moe to vllm's chat template fallback registry.
