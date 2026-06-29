@@ -1126,11 +1126,8 @@ class StageConfigFactory:
 
         pipeline_key = deploy_cfg.pipeline or model_type
         if pipeline_key is None or pipeline_key not in _PIPELINE_REGISTRY:
-            raise KeyError(
-                f"Pipeline {pipeline_key!r} not in registry "
-                f"(resolved from {deploy_path.name!r}). Available: "
-                f"{sorted(_PIPELINE_REGISTRY.keys())}"
-            )
+            logger.warning("Failed to resolve a registered pipeline for endpoint restrictions")
+            return ()
         pipeline_cfg = _PIPELINE_REGISTRY[pipeline_key]
         return pipeline_cfg.endpoint_restrictions if pipeline_cfg else ()
 
