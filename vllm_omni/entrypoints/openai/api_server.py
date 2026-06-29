@@ -91,6 +91,7 @@ from vllm.utils import random_uuid
 from vllm.utils.system_utils import decorate_logs
 from vllm.v1.engine.exceptions import EngineDeadError, EngineGenerateError
 
+from vllm_omni.config.endpoint_policy import shutdown_unsupported_routes
 from vllm_omni.diffusion.models.interface import ReferenceVideoDecodeSpec
 from vllm_omni.entrypoints.async_omni import AsyncOmni
 from vllm_omni.entrypoints.openai.errors import InvalidInputReferenceError
@@ -256,7 +257,7 @@ async def _get_vllm_config(engine_client: EngineClient) -> Any:
     return getattr(engine_client, "vllm_config", None)
 
 
-def _remove_route_from_app(app, path: str, methods: set[str] | None = None):
+def _remove_route_from_app(app, path: str, methods: frozenset[str] | None = None):
     """Remove a route from the app by path and optionally by methods.
 
     OMNI: used to override upstream /v1/chat/completions with omni behavior.
@@ -473,6 +474,12 @@ async def omni_run_server_worker(listen_address, sock, args, client_config=None,
         _register_omni_exception_handlers(app)
 
         await omni_init_app_state(engine_client, app.state, args)
+
+        # After initializing the app state, shut down any endpoints that are model specific
+        if hasattr(engine_client, "endpoint_restrictions"):
+            shutdown_unsupported_routes(app, engine_client.endpoint_restrictions)
+        else:
+            logger.warning("engine client has no endpoint restrictions attribute")
 
         # Conditionally register profiler endpoints based on stage YAML configs
         stage_configs = engine_client.stage_configs if hasattr(engine_client, "stage_configs") else None
@@ -1128,8 +1135,7 @@ async def create_chat_completion(request: ChatCompletionRequest, raw_request: Re
         if not isinstance(modalities, list) or not all(isinstance(m, str) for m in modalities):
             raise HTTPException(
                 status_code=HTTPStatus.BAD_REQUEST.value,
-                detail="modalities must be a list of strings, e.g. "
-                '[\"text\", \"audio\", \"image\"]',
+                detail='modalities must be a list of strings, e.g. ["text", "audio", "image"]',
             )
     if "logprobs" in raw_body and not isinstance(raw_body["logprobs"], bool):
         raise HTTPException(

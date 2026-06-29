@@ -12,8 +12,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from transformers import PretrainedConfig
 
 from tests.helpers.stage_config import get_deploy_config_path
+from vllm_omni.config.endpoint_policy import EndpointRestriction, OmniServingCapability
 from vllm_omni.config.stage_config import (
     _PIPELINE_REGISTRY,
     DeployConfig,
@@ -37,7 +39,16 @@ from vllm_omni.engine.arg_utils import SHARED_FIELDS, EngineArgs, internal_black
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
-pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
+
+# TODO (Alex) - remove this in the next release, this is only used in the
+# patch since we didn't carry the eager registry change forward yet.
+@pytest.fixture
+def clean_pipeline_registry():
+    """Ensure the OMNI_PIPELINES are in a clean state for a test that mutates it."""
+    snapshot = dict(_PIPELINE_REGISTRY)
+    yield
+    _PIPELINE_REGISTRY.clear()
+    _PIPELINE_REGISTRY.update(snapshot)
 
 
 class TestStageType:
@@ -613,6 +624,45 @@ class TestPipelineRegistry:
         register_pipeline(p)
         assert _PIPELINE_REGISTRY["__test_only__"] is p
         del _PIPELINE_REGISTRY["__test_only__"]
+
+
+class TestEndpointRejection:
+    def test_deploy_override_uses_correct_endpoint_restrictions(self, clean_pipeline_registry, tmp_path):
+        """Ensure endpoint restrictions must come from the final pipeline
+        after deploy config overrides, not the auto-detected pipeline.
+        """
+        # Register two pipeline configs, where one has an endpoint restriction, and one doesn't
+        restriction = EndpointRestriction(
+            OmniServingCapability.COMPLETIONS,
+            "pipeline_a blocks completions",
+        )
+        pipe_a = PipelineConfig(model_type="detect_type", endpoint_restrictions=(restriction,))
+        pipe_b = PipelineConfig(model_type="override_type", endpoint_restrictions=())
+        register_pipeline(pipe_a)
+        register_pipeline(pipe_b)
+
+        # Create a config with the autodetected type, and write the
+        # deploy config specifying the override type to a temp path
+        class FakeConfig(PretrainedConfig):
+            model_type = "detect_type"
+
+        deploy_yaml = tmp_path / "override.yaml"
+        deploy_yaml.write_text("pipeline: override_type\n")
+
+        # Get the endpoint restrictions, passing the deploy config with the override
+        # type + patching the config for the detected type. Ensure that the endpoint
+        # restrictions correspond to the type in the deploy config.
+        with patch(
+            "vllm.transformers_utils.config.get_config",
+            return_value=FakeConfig(),
+        ):
+            restrictions = StageConfigFactory.get_pipeline_endpoint_restrictions(
+                model="fake/model",
+                trust_remote_code=False,
+                deploy_config_path=str(deploy_yaml),
+            )
+
+        assert restrictions == ()
 
 
 class TestDeployConfigLoading:
