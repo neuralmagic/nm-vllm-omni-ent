@@ -907,6 +907,9 @@ def merge_pipeline_deploy(
     deploy = _apply_platform_overrides(deploy)
     deploy_by_id = {s.stage_id: s for s in deploy.stages}
 
+    if len(pipeline.stages) <= 1:
+        deploy.async_chunk = False
+
     # A pipeline supports async_chunk if any stage has either an explicit
     # async-chunk-only processor slot OR a custom next-stage processor (some
     # pipelines like qwen3_omni wire async-chunk processing directly through
@@ -1344,6 +1347,19 @@ class StageConfigFactory:
             from vllm.transformers_utils.config import get_config
 
             hf_config = get_config(model, trust_remote_code=trust_remote_code)
+
+            # Alex - beeg hack for qwen3 omni single stage models. We do this
+            # to avoid bringing in this PR for this release:
+            # https://github.com/vllm-project/vllm-omni/pull/3760
+            #
+            # We should remove this hack after the next rebase
+            if (
+                hf_config.model_type == "qwen3_omni_moe"
+                and hasattr(hf_config, "enable_audio_output")
+                and not hf_config.enable_audio_output
+            ):
+                logger.info("Remapping qwen3_omni_moe -> qwen3_omni_moe_thinker_only (no audio output)")
+                hf_config.model_type = "qwen3_omni_moe_thinker_only"
             return hf_config.model_type, hf_config
         except Exception as e:
             logger.debug(f"`get_config` failed for {e}; Falling back to raw config.json path")
