@@ -16,6 +16,7 @@ from typing import Any, NamedTuple
 from vllm.logger import init_logger
 from vllm.v1.core.sched.scheduler import Scheduler as VLLMScheduler
 
+from vllm_omni.config.endpoint_policy import EndpointRestriction
 from vllm_omni.config.yaml_util import create_config, load_yaml_config, to_dict
 from vllm_omni.core.sched.omni_ar_scheduler import OmniARAsyncScheduler, OmniARScheduler
 from vllm_omni.core.sched.omni_generation_scheduler import OmniGenerationScheduler
@@ -244,6 +245,7 @@ class PipelineConfig:
     # this value to auto-detect the pipeline.  Only needed for diffusers-style
     # multi-component repos (e.g. GLM-Image).  ``None`` = not a diffusers model.
     diffusers_class_name: str | None = None
+    endpoint_restrictions: tuple[EndpointRestriction, ...] = ()
 
     def get_stage(self, stage_id: int) -> StagePipelineConfig | None:
         """Look up a stage by its ID."""
@@ -1068,11 +1070,76 @@ class StageConfigFactory:
     """
 
     @classmethod
+    def get_pipeline_endpoint_restrictions(
+        cls,
+        model: str,
+        trust_remote_code: bool,
+        deploy_config_path: str | None,
+    ) -> tuple[EndpointRestriction, ...]:
+        """Given a model string, determine the corresponding endpoint restrictions.
+
+        Args:
+            model: Model name or path.
+            trust_remote_code: Whether to trust remote code for HF config loading.
+            deploy_config_path: Optional path to the deploy config for the pipeline.
+
+        Returns:
+            A tuple of model specific endpoint restrictions.
+        """
+        # Alex - this is gross, it's basically a copy+paste of what we need to resolve the model type.
+        # This has been refactored a lot in the upstream, so will go away after this release.
+        model_type, _ = cls._auto_detect_model_type(model, trust_remote_code=trust_remote_code)
+        if model_type == "vla":
+            from vllm_omni.diffusion.utils.hf_utils import _looks_like_dreamzero
+
+            if _looks_like_dreamzero(model):
+                model_type = "dreamzero"
+
+        # Deploy config applies over the inferred config
+        if deploy_config_path is None:
+            deploy_path = _DEPLOY_DIR / f"{model_type}.yaml"
+        else:
+            deploy_path = Path(deploy_config_path)
+            # Bare-name lookup: if the value isn't a real path, try the
+            # built-in deploy directory. This lets ``deploy_config="moss_tts"``
+            # resolve to ``vllm_omni/deploy/moss_tts.yaml`` when several model
+            # variants share an HF ``model_type`` and need different YAMLs.
+            if not deploy_path.exists() and deploy_path.parent == Path("."):
+                bare_name = deploy_path.name
+                if not bare_name.endswith(".yaml"):
+                    bare_name = f"{bare_name}.yaml"
+                candidate = _DEPLOY_DIR / bare_name
+                if candidate.exists():
+                    deploy_path = candidate
+
+        if not deploy_path.exists():
+            logger.warning(
+                "Deploy config not found: %s — using pipeline defaults only",
+                deploy_path,
+            )
+            deploy_cfg = DeployConfig()
+        else:
+            deploy_cfg = load_deploy_config(deploy_path)
+
+        pipeline_key = deploy_cfg.pipeline or model_type
+        if pipeline_key is None or pipeline_key not in _PIPELINE_REGISTRY:
+            raise KeyError(
+                f"Pipeline {pipeline_key!r} not in registry "
+                f"(resolved from {deploy_path.name!r}). Available: "
+                f"{sorted(_PIPELINE_REGISTRY.keys())}"
+            )
+        pipeline_cfg = _PIPELINE_REGISTRY[pipeline_key]
+        return pipeline_cfg.endpoint_restrictions if pipeline_cfg else ()
+
+    @classmethod
     def create_from_model(
         cls,
         model: str,
+        *,
+        trust_remote_code: bool = False,
         cli_overrides: dict[str, Any] | None = None,
         deploy_config_path: str | None = None,
+        **deprecated_kwargs: Any,
     ) -> list[StageConfig] | None:
         """Load pipeline + deploy config, merge with CLI overrides.
 
@@ -1080,10 +1147,6 @@ class StageConfigFactory:
         """
         if cli_overrides is None:
             cli_overrides = {}
-
-        trust_remote_code = cli_overrides.get("trust_remote_code", True)
-        if trust_remote_code is None:
-            trust_remote_code = False
 
         # --- New path: check pipeline registry by model_type first ---
         model_type, hf_config = cls._auto_detect_model_type(model, trust_remote_code=trust_remote_code)

@@ -7,6 +7,7 @@ Stage 1: Talker  — text embeddings → RVQ codec codes
 Stage 2: Code2Wav — RVQ codes → audio waveform
 """
 
+from vllm_omni.config.endpoint_policy import EndpointRestriction, OmniServingCapability
 from vllm_omni.config.stage_config import (
     PipelineConfig,
     StageExecutionType,
@@ -18,6 +19,12 @@ _PROC = "vllm_omni.model_executor.stage_input_processors.qwen3_omni"
 QWEN3_OMNI_PIPELINE = PipelineConfig(
     model_type="qwen3_omni_moe",
     model_arch="Qwen3OmniMoeForConditionalGeneration",
+    endpoint_restrictions=(
+        EndpointRestriction(
+            OmniServingCapability.COMPLETIONS,
+            "Qwen3-Omni requires chat template structure for thinker-talker handoff. Use /v1/chat/completions instead.",
+        ),
+    ),
     stages=(
         StagePipelineConfig(
             stage_id=0,
