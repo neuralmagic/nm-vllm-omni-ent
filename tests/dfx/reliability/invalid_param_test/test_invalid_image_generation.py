@@ -110,6 +110,16 @@ def _minimal_images_gen_json(omni_server: OmniServer) -> dict[str, object]:
             id="negative_prompt_wrong_type",
         ),
         pytest.param(
+            {"negative_prompt": ""},
+            ("negative_prompt", "value_error", "non-empty"),
+            id="negative_prompt_empty",
+        ),
+        pytest.param(
+            {"system_prompt": ""},
+            ("system_prompt", "value_error", "non-empty"),
+            id="system_prompt_empty",
+        ),
+        pytest.param(
             {"generator_device": 1},
             ("generator_device", "string_type", "valid string"),
             id="generator_device_wrong_type",
