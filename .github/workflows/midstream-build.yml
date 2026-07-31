@@ -36,7 +36,7 @@ on:
       nm_cicd_ref:
         description: "nm-cicd branch to run workflow from"
         required: false
-        default: "feature/vllm-omni"
+        default: "feature/vllm-omni-dev-preview"
         type: string
       target_device:
         description: "Target device"
@@ -108,7 +108,7 @@ jobs:
 
           NM_CICD_REF="${{ inputs.nm_cicd_ref }}"
           if [[ -z "${NM_CICD_REF}" ]]; then
-            NM_CICD_REF="feature/vllm-omni"
+            NM_CICD_REF="feature/vllm-omni-dev-preview"
           fi
 
           TARGET_DEVICE="${{ inputs.target_device }}"
