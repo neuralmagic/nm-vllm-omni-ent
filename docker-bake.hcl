@@ -92,39 +92,6 @@ target "rocm" {
   ]
 }
 
-target "cuda-test" {
-  inherits = ["cuda"]
-  target = "vllm-omni-test"
-
-  tags = [
-    "${REPOSITORY}:${replace(VLLM_OMNI_VERSION, "+", "_")}-test",
-    "${REPOSITORY}:cuda-${GITHUB_SHA}-test",
-    "${REPOSITORY}:cuda-${GITHUB_RUN_ID}-test",
-  ]
-}
-
-group "cuda-with-test" {
-  targets = ["cuda", "cuda-test", "cuda-develsdk"]
-}
-
-target "cuda-develsdk" {
-  inherits = ["cuda"]
-
-  args = {
-    PYTHON_VERSION = "${PYTHON_VERSION}"
-    CUDA_MAJOR = "13"
-    CUDA_MINOR = "0"
-    INSTALL_CUDA_DEVEL = "true"
-  }
-
-  tags = [
-    "${REPOSITORY}:cuda-develsdk-${replace(VLLM_OMNI_VERSION, "+", "_")}",
-    "${REPOSITORY}:cuda-develsdk-${GITHUB_SHA}",
-    "${REPOSITORY}:cuda-develsdk-${GITHUB_RUN_ID}",
-    RELEASE_IMAGE ? "quay.io/vllm/vllm-omni-cuda-develsdk:${replace(VLLM_OMNI_VERSION, "+", "_")}" : ""
-  ]
-}
-
 target "cpu" {
   inherits = ["_common"]
   dockerfile = "Dockerfile.cpu.ubi"

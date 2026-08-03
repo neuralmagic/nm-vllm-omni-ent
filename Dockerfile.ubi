@@ -74,9 +74,11 @@ RUN microdnf install -y \
 
 
 ## Release #####################################################################
+# Default cuda image: flashinfer-jit-cache + cubin cover supported GPUs
+# (Ampere/Ada/Hopper/Blackwell via cu130 wheels), so no cuda-develsdk
+# fallback variant is built.
 FROM python-install AS vllm-omni-openai
 ARG PYTHON_VERSION
-ARG INSTALL_CUDA_DEVEL=false
 
 WORKDIR /workspace
 
@@ -92,16 +94,6 @@ ENV LIBRARY_PATH="${CUDA_HOME}/lib64/stubs:/usr/lib64"
 # Triton needs a CC compiler, triton-kernels install from a git URL
 RUN microdnf install -y gcc git && \
     microdnf clean all
-
-# FlashInfer JIT fallback packages (cuda-develsdk variant only).
-# Installed here (not in cuda-base) so earlier stages cache-hit across variants.
-RUN if [ "$INSTALL_CUDA_DEVEL" = "true" ]; then \
-        microdnf install -y --nodocs \
-            libcurand-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
-            libcublas-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
-            cuda-driver-devel-${CUDA_MAJOR}-${CUDA_MINOR} \
-        && microdnf clean all; \
-    fi
 
 # espeak-ng: TTS phonemizer backend (Qwen3-TTS, etc.)
 COPY --from=espeak-ng-builder /usr/local/bin/espeak-ng /usr/local/bin/
@@ -138,32 +130,3 @@ RUN umask 0002 \
 
 # vllm-omni uses vllm entrypoint with --omni flag (matches upstream pattern)
 CMD ["vllm", "serve", "--omni"]
-
-
-## Test ########################################################################
-# Test image includes the upstream test suite so CI can run pytest directly
-# against the shipped artifact. Production image (vllm-omni-openai) is unaffected.
-# Build with: docker buildx bake cuda-test
-FROM vllm-omni-openai AS vllm-omni-test
-
-USER 0
-WORKDIR /workspace
-
-COPY . .
-
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --excludes midstream/test-excludes.txt ".[dev]" && \
-    find /opt/vllm -path '*/cv2/typing' -type d -exec rm -rf {} + 2>/dev/null || true
-
-RUN ln -sf /workspace/tests /tests
-
-# OpenShift runs pods as arbitrary UIDs in the root group (gid=0).
-# Make workspace and caches group-writable so tests can create temp
-# dirs like .ci_generated and write UV/pip caches at runtime.
-RUN chmod -R g+rwX /workspace && \
-    chmod -R g+rwX /home/vllm/.cache
-
-ENV HF_HUB_OFFLINE=0
-
-ENTRYPOINT []
-CMD ["pytest", "/tests/", "-v", "--co"]

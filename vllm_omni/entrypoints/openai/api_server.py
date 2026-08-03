@@ -1164,8 +1164,7 @@ async def create_chat_completion(request: ChatCompletionRequest, raw_request: Re
         if not isinstance(modalities, list) or not all(isinstance(m, str) for m in modalities):
             raise HTTPException(
                 status_code=HTTPStatus.BAD_REQUEST.value,
-                detail="modalities must be a list of strings, e.g. "
-                '[\"text\", \"audio\", \"image\"]',
+                detail='modalities must be a list of strings, e.g. ["text", "audio", "image"]',
             )
     if "logprobs" in raw_body and not isinstance(raw_body["logprobs"], bool):
         raise HTTPException(
