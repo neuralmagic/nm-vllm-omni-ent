@@ -70,7 +70,6 @@ from vllm.entrypoints.serve.tokenize.serving import ServingTokenization
 from vllm.entrypoints.serve.utils.api_utils import (
     load_aware_call,
     process_lora_modules,
-    validate_json_request,
     with_cancellation,
 )
 from vllm.entrypoints.serve.utils.error_response import create_error_response
@@ -125,6 +124,7 @@ from vllm_omni.entrypoints.openai.protocol.videos import (
     VideoResponse,
 )
 from vllm_omni.entrypoints.openai.realtime_connection import RealtimeConnection
+from vllm_omni.entrypoints.openai.request_validation import validate_json_object_request
 from vllm_omni.entrypoints.openai.serving_audio_generate import OmniOpenAIServingAudioGenerate
 from vllm_omni.entrypoints.openai.serving_chat import OmniOpenAIServingChat
 from vllm_omni.entrypoints.openai.serving_speech import OmniOpenAIServingSpeech
@@ -1161,7 +1161,7 @@ def OmniAudioGenerate(request: Request) -> OmniOpenAIServingAudioGenerate | None
 
 @router.post(
     "/v1/chat/completions",
-    dependencies=[Depends(validate_json_request)],
+    dependencies=[Depends(validate_json_object_request)],
     responses={
         HTTPStatus.OK.value: {"content": {"text/event-stream": {}}},
         HTTPStatus.BAD_REQUEST.value: {"model": ErrorResponse},
@@ -1173,6 +1173,11 @@ def OmniAudioGenerate(request: Request) -> OmniOpenAIServingAudioGenerate | None
 @load_aware_call
 async def create_chat_completion(request: ChatCompletionRequest, raw_request: Request):
     raw_body = await raw_request.json()
+    if not isinstance(raw_body, dict):
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST.value,
+            detail="Request body must be a JSON object",
+        )
     if "modalities" in raw_body:
         modalities = raw_body["modalities"]
         if not isinstance(modalities, list) or not all(isinstance(m, str) for m in modalities):
@@ -1252,7 +1257,7 @@ _remove_route_from_router(router, "/v1/audio/speech", {"POST"})
 
 @router.post(
     "/v1/audio/speech",
-    dependencies=[Depends(validate_json_request)],
+    dependencies=[Depends(validate_json_object_request)],
     responses={
         HTTPStatus.OK.value: {"content": {"audio/*": {}, "text/event-stream": {}}},
         HTTPStatus.BAD_REQUEST.value: {"model": ErrorResponse},
@@ -1304,7 +1309,7 @@ async def create_speech(request: OpenAICreateSpeechRequest, raw_request: Request
 
 @router.post(
     "/v1/audio/speech/batch",
-    dependencies=[Depends(validate_json_request)],
+    dependencies=[Depends(validate_json_object_request)],
     responses={
         HTTPStatus.OK.value: {"model": dict},
         HTTPStatus.BAD_REQUEST.value: {"model": ErrorResponse},
@@ -1347,7 +1352,7 @@ async def create_speech_batch(request: BatchSpeechRequest, raw_request: Request)
 
 @router.post(
     "/v1/audio/generate",
-    dependencies=[Depends(validate_json_request)],
+    dependencies=[Depends(validate_json_object_request)],
     responses={
         HTTPStatus.OK.value: {"content": {"audio/*": {}}},
         HTTPStatus.BAD_REQUEST.value: {"model": ErrorResponse},
@@ -1779,7 +1784,7 @@ def _build_image_generation_response(
 
 @router.post(
     "/v1/images/generations",
-    dependencies=[Depends(validate_json_request)],
+    dependencies=[Depends(validate_json_object_request)],
     response_model=None,
     responses={
         HTTPStatus.OK.value: {"model": ImageGenerationResponse},
