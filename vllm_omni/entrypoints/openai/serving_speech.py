@@ -55,6 +55,7 @@ from vllm_omni.entrypoints.openai.tts_adapters import (
     SpeechServingContext,
     resolve_adapter,
 )
+from vllm_omni.entrypoints.openai.tts_adapters.omnivoice import OmniVoiceAdapter
 from vllm_omni.entrypoints.utils import coerce_param_message_types
 from vllm_omni.model_executor.models.fish_speech.prompt_utils import (
     build_fish_text_only_prompt_ids,
@@ -455,6 +456,9 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
         instance._diffusion_model_name = model_name
         instance._diffusion_stage_configs = stage_configs
         instance._tts_model_type = "omnivoice"
+        # Set adapter to OmniVoice as it is currently the only diffusion TTS model
+        # Temporary assignment until https://github.com/vllm-project/vllm-omni/issues/4327 is completed
+        instance._adapter = OmniVoiceAdapter(SpeechServingContext(server=instance, engine_client=None))
         instance._is_tts = False
         instance._is_fish_speech = False
         # Diffusion-only instances don't have a TTS stage; set None so any
@@ -3668,6 +3672,13 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
     ) -> Response:
         """Handle speech generation for pure diffusion TTS models (e.g. OmniVoice)."""
         from vllm_omni.outputs import OmniRequestOutput
+
+        try:
+            # Assume that this will follow the same pattern of adapter.validate and adapter.build
+            # used in _prepare_speech_generation once all RFC is implemented
+            self._adapter.validate(request)
+        except Warning as w:
+            logger.warning("Warning: %s", w)
 
         try:
             if not request.input or not request.input.strip():
