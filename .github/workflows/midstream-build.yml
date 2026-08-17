@@ -1,4 +1,8 @@
-name: "Midstream Build"
+name: "Midstream Build (deprecated)"
+
+# Deprecated: use omni-release.yml instead. This workflow polls nm-cicd via gh CLI
+# and holds an Ent runner for hours. omni-release.yml dispatches omni-pipeline.yml
+# once; the full DAG runs in nm-cicd.
 
 on:
   push:
