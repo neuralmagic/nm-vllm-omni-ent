@@ -257,6 +257,7 @@ jobs:
       - name: Poll for triggered run
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          NM_CICD_REPO: neuralmagic/nm-cicd
         shell: bash
         run: |
           set -euo pipefail
@@ -351,6 +352,7 @@ jobs:
         id: poll
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          NM_CICD_REPO: neuralmagic/nm-cicd
         shell: bash
         run: |
           set -euo pipefail
@@ -532,6 +534,7 @@ jobs:
         id: poll
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          NM_CICD_REPO: neuralmagic/nm-cicd
         shell: bash
         run: |
           set -euo pipefail
@@ -719,6 +722,7 @@ jobs:
         id: trigger
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          NM_CICD_REPO: neuralmagic/nm-cicd
         shell: bash
         run: |
           set -euo pipefail
@@ -754,6 +758,7 @@ jobs:
         id: poll
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          NM_CICD_REPO: neuralmagic/nm-cicd
         shell: bash
         run: |
           set -euo pipefail

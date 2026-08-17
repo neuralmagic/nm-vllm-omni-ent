@@ -30,7 +30,7 @@ The Ent workflow dispatches once (GitHub App token). The full build+test cycle r
 | **full-chain** | Omni release (tag or manual with `run_ocp_validation=true`) |
 | **omni-wheel** | nm-cicd `accept-sync.yml` with `build_image=false` |
 | **docker-image** | nm-cicd `accept-sync.yml` with existing `vllm_run_id` + `omni_run_id` |
-| **vllm-wheel** | nm-cicd `build-whl.yml` for `neuralmagic/nm-vllm-ent` |
+| **vllm-wheel** | nm-cicd `build-whl.yml` for `neuralmagic/nm-vllm-ent` (manual) |
 
 ### Tag-Based Triggers (Full Chain)
 
