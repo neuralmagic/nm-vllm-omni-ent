@@ -95,11 +95,13 @@ class OmniOpenAIServingAudioGenerate(OpenAIServing, AudioMixin):
                     "audio_end_in_s": audio_end_in_s,
                 }
 
-            logger.info(
-                "Audio generation request %s: prompt=%r",
-                request_id,
-                request.input[:50] + "..." if len(request.input) > 50 else request.input,
-            )
+            logger.info("Audio generation request %s", request_id)
+            _rl = getattr(self, "request_logger", None)
+            if _rl:
+                base_len = len(f"Audio generation request {request_id}: prompt=")
+                max_len = (getattr(_rl, "max_log_len", None) or 200) - base_len
+                text = request.input[: max(max_len, 0)]
+                logger.debug("Audio generation request %s: prompt=%r", request_id, text)
 
             generator = self.engine_client.generate(
                 prompt=prompt,
