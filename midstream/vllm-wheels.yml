@@ -1,4 +1,4 @@
-# Only run_id is used by midstream-build.yml — branch and note are provenance metadata.
+# run_id is used by omni-release / omni-pipeline — branch and note are provenance metadata.
 v0.26.0:
   run_id: "31477956333"
   branch: "sync-v0.26.0"

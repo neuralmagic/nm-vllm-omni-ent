@@ -2,7 +2,7 @@
 # or manually via workflow_dispatch.
 #
 # On tag push, defaults are fixed:
-#   - cicd_ref=main
+#   - cicd_ref=feature/vllm-omni-tp
 #   - wf_category=RELEASE
 #   - run_ocp_validation=true
 #   - python=3.12
@@ -27,7 +27,7 @@ on:
       cicd_ref:
         description: "Branch or ref of nm-cicd"
         type: string
-        default: "main"
+        default: "feature/vllm-omni-tp"
       python:
         description: "Python version"
         type: string
@@ -61,7 +61,7 @@ on:
 
 env:
   REF: ${{ github.event_name == 'push' && github.ref_name || inputs.ref || github.ref_name }}
-  CICD_REF: ${{ github.event_name == 'push' && 'main' || inputs.cicd_ref }}
+  CICD_REF: ${{ github.event_name == 'push' && 'feature/vllm-omni-tp' || inputs.cicd_ref }}
   PYTHON: ${{ inputs.python || '3.12' }}
   VLLM_RUN_ID: ${{ inputs.vllm_run_id || '' }}
   WF_CATEGORY: ${{ github.event_name == 'push' && 'RELEASE' || inputs.wf_category || 'DEBUG' }}
@@ -113,22 +113,22 @@ jobs:
 
           PIPELINE_URL="https://github.com/neuralmagic/nm-cicd/actions/workflows/omni-pipeline.yml"
 
-          cat >> "$GITHUB_STEP_SUMMARY" << EOF
-          ### Triggered nm-cicd omni pipeline
-
-          | Parameter | Value |
-          |-----------|-------|
-          | Workflow | \`neuralmagic/nm-cicd / omni-pipeline.yml\` |
-          | Pipeline runs | [View in nm-cicd](${PIPELINE_URL}) |
-          | nm-cicd ref | \`$CICD_REF\` |
-          | Omni repo | \`${{ github.repository }}\` |
-          | Omni ref | \`$REF\` |
-          | python | \`$PYTHON\` |
-          | wf_category | \`$WF_CATEGORY\` |
-          | run_ocp_validation | \`$RUN_OCP\` |
-          | vllm_run_id | \`${VLLM_RUN_ID:-auto from midstream/vllm-wheels.yml}\` |
-          | model_validation_configs_ref | \`$MODEL_VAL_REF\` |
-          | testing_options_flags | \`$TESTING_OPTIONS\` |
-
-          The full build cycle (wheel → image → accept-sync partitions → OCP validation) runs in a **single nm-cicd workflow run**.
-          EOF
+          {
+            echo "### Triggered nm-cicd omni pipeline"
+            echo ""
+            echo "| Parameter | Value |"
+            echo "|-----------|-------|"
+            echo "| Workflow | \`neuralmagic/nm-cicd / omni-pipeline.yml\` |"
+            echo "| Pipeline runs | [View in nm-cicd](${PIPELINE_URL}) |"
+            echo "| nm-cicd ref | \`$CICD_REF\` |"
+            echo "| Omni repo | \`${{ github.repository }}\` |"
+            echo "| Omni ref | \`$REF\` |"
+            echo "| python | \`$PYTHON\` |"
+            echo "| wf_category | \`$WF_CATEGORY\` |"
+            echo "| run_ocp_validation | \`$RUN_OCP\` |"
+            echo "| vllm_run_id | \`${VLLM_RUN_ID:-auto from midstream/vllm-wheels.yml}\` |"
+            echo "| model_validation_configs_ref | \`$MODEL_VAL_REF\` |"
+            echo "| testing_options_flags | \`$TESTING_OPTIONS\` |"
+            echo ""
+            echo "The full build cycle (wheel → image → accept-sync partitions → OCP validation) runs in a **single nm-cicd workflow run**."
+          } >> "$GITHUB_STEP_SUMMARY"
