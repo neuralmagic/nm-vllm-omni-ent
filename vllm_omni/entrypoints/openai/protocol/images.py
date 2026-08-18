@@ -187,7 +187,6 @@ class ImageGenerationRequest(BaseModel):
     )
 
 
-
 class ImageData(BaseModel):
     """Single generated image data"""
 
