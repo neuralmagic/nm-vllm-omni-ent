@@ -128,5 +128,5 @@ RUN umask 0002 \
     && mkdir -p /licenses /home/vllm/.cache \
     && chmod g+rwx /home/vllm /home/vllm/.cache
 
-# vllm-omni uses vllm entrypoint with --omni flag (matches upstream pattern)
-CMD ["vllm", "serve", "--omni"]
+# vllm-omni uses vllm entrypoint with --omni flag (matches midstream pattern)
+ENTRYPOINT ["python3", "-m", "vllm_omni.entrypoints.openai.api_server", "--omni"]
