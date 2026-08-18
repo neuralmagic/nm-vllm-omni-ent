@@ -1,0 +1,858 @@
+name: "Midstream Build (deprecated)"
+
+# Deprecated: use omni-release.yml instead. This workflow polls nm-cicd via gh CLI
+# and holds an Ent runner for hours. omni-release.yml dispatches omni-pipeline.yml
+# once; the full DAG runs in nm-cicd.
+
+on:
+  push:
+    tags:
+      - "omni-*"
+
+  workflow_dispatch:
+    inputs:
+      build_step:
+        description: "Which build step to trigger"
+        required: true
+        type: choice
+        options:
+          - full-chain
+          - vllm-wheel
+          - omni-wheel
+          - docker-image
+      omni_ref:
+        description: "nm-vllm-omni-ent branch/tag/SHA (default: current ref)"
+        required: false
+        type: string
+      vllm_ref:
+        description: "nm-vllm-ent branch for vLLM wheel build"
+        required: false
+        default: "main"
+        type: string
+      vllm_run_id:
+        description: "Existing vLLM wheel run ID (auto-resolved from mapping if empty)"
+        required: false
+        type: string
+      omni_run_id:
+        description: "Existing omni wheel run ID (only for standalone docker-image step)"
+        required: false
+        type: string
+      nm_cicd_ref:
+        description: "nm-cicd branch to run workflow from"
+        required: false
+        default: "feature/vllm-omni-tp"
+        type: string
+      target_device:
+        description: "Target device"
+        required: false
+        default: "cuda"
+        type: choice
+        options:
+          - cuda
+          - rocm
+          - cpu
+      build_label_wheel:
+        description: "Override runner label for wheel builds (leave empty for default)"
+        required: false
+        type: string
+      build_label_image:
+        description: "Override runner label for image build (leave empty for default)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  NM_CICD_REPO: neuralmagic/nm-cicd
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Resolve — shared setup for all jobs
+  # ---------------------------------------------------------------------------
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      build_step: ${{ steps.resolve.outputs.build_step }}
+      omni_ref: ${{ steps.resolve.outputs.omni_ref }}
+      vllm_ref: ${{ steps.resolve.outputs.vllm_ref }}
+      nm_cicd_ref: ${{ steps.resolve.outputs.nm_cicd_ref }}
+      target_device: ${{ steps.resolve.outputs.target_device }}
+      build_label_wheel: ${{ steps.resolve.outputs.build_label_wheel }}
+      build_label_image: ${{ steps.resolve.outputs.build_label_image }}
+      vllm_run_id: ${{ steps.resolve.outputs.vllm_run_id }}
+      omni_run_id: ${{ steps.resolve.outputs.omni_run_id }}
+      vllm_version: ${{ steps.resolve.outputs.vllm_version }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Resolve inputs
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Build step — default to full-chain for tag pushes
+          BUILD_STEP="${{ inputs.build_step }}"
+          if [[ -z "${BUILD_STEP}" ]]; then
+            BUILD_STEP="full-chain"
+          fi
+
+          OMNI_REF="${{ inputs.omni_ref }}"
+          if [[ -z "${OMNI_REF}" ]]; then
+            OMNI_REF="${GITHUB_REF_NAME}"
+          fi
+
+          VLLM_REF="${{ inputs.vllm_ref }}"
+          if [[ -z "${VLLM_REF}" ]]; then
+            VLLM_REF="main"
+          fi
+
+          NM_CICD_REF="${{ inputs.nm_cicd_ref }}"
+          if [[ -z "${NM_CICD_REF}" ]]; then
+            NM_CICD_REF="feature/vllm-omni"
+          fi
+
+          TARGET_DEVICE="${{ inputs.target_device }}"
+          if [[ -z "${TARGET_DEVICE}" ]]; then
+            TARGET_DEVICE="cuda"
+          fi
+
+          BUILD_LABEL_WHEEL="${{ inputs.build_label_wheel }}"
+          if [[ -z "${BUILD_LABEL_WHEEL}" ]]; then
+            BUILD_LABEL_WHEEL="k8s-a100-build-13-0"
+          fi
+
+          BUILD_LABEL_IMAGE="${{ inputs.build_label_image }}"
+          if [[ -z "${BUILD_LABEL_IMAGE}" ]]; then
+            BUILD_LABEL_IMAGE="k8s-a100-util"
+          fi
+
+          # Resolve vllm_run_id from mapping if not provided
+          VLLM_RUN_ID="${{ inputs.vllm_run_id }}"
+          VLLM_VERSION=""
+
+          if [[ -f midstream/vllm-version ]]; then
+            VLLM_VERSION=$(tr -d '[:space:]' < midstream/vllm-version)
+          fi
+
+          if [[ -z "${VLLM_RUN_ID}" && "${BUILD_STEP}" != "vllm-wheel" ]]; then
+            if [[ -n "${VLLM_VERSION}" && -f midstream/vllm-wheels.yml ]]; then
+              VLLM_RUN_ID=$(python3 -c "
+          import yaml, sys
+          with open('midstream/vllm-wheels.yml') as f:
+              data = yaml.safe_load(f)
+          entry = data.get('${VLLM_VERSION}')
+          if entry and 'run_id' in entry:
+              print(entry['run_id'])
+          else:
+              sys.exit(1)
+          " 2>/dev/null) || true
+
+              if [[ -n "${VLLM_RUN_ID}" ]]; then
+                echo "Resolved vllm_run_id=${VLLM_RUN_ID} from mapping (vllm ${VLLM_VERSION})"
+              else
+                echo "::warning::Could not resolve vllm_run_id from midstream/vllm-wheels.yml for version ${VLLM_VERSION}"
+              fi
+            fi
+          fi
+
+          OMNI_RUN_ID="${{ inputs.omni_run_id }}"
+
+          {
+            echo "build_step=${BUILD_STEP}"
+            echo "omni_ref=${OMNI_REF}"
+            echo "vllm_ref=${VLLM_REF}"
+            echo "nm_cicd_ref=${NM_CICD_REF}"
+            echo "target_device=${TARGET_DEVICE}"
+            echo "build_label_wheel=${BUILD_LABEL_WHEEL}"
+            echo "build_label_image=${BUILD_LABEL_IMAGE}"
+            echo "vllm_run_id=${VLLM_RUN_ID}"
+            echo "omni_run_id=${OMNI_RUN_ID}"
+            echo "vllm_version=${VLLM_VERSION}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STEP="${{ steps.resolve.outputs.build_step }}"
+          VLLM_RUN_ID="${{ steps.resolve.outputs.vllm_run_id }}"
+          OMNI_RUN_ID="${{ steps.resolve.outputs.omni_run_id }}"
+
+          if [[ "${STEP}" =~ ^(omni-wheel|full-chain)$ && -z "${VLLM_RUN_ID}" ]]; then
+            echo "::error::${STEP} requires vllm_run_id — provide it as input or add an entry to midstream/vllm-wheels.yml"
+            exit 1
+          fi
+
+          if [[ "${STEP}" == "docker-image" && -z "${VLLM_RUN_ID}" ]]; then
+            echo "::error::docker-image requires vllm_run_id — provide it as input or add an entry to midstream/vllm-wheels.yml"
+            exit 1
+          fi
+
+          if [[ "${STEP}" == "docker-image" && -z "${OMNI_RUN_ID}" ]]; then
+            echo "::error::docker-image requires omni_run_id (the run ID of a completed omni wheel build)"
+            exit 1
+          fi
+
+      - name: Log request
+        shell: bash
+        run: |
+          cat <<EOF
+          ======================================
+          Midstream Build Request
+          ======================================
+          Build step:       ${{ steps.resolve.outputs.build_step }}
+          Target repo:      ${NM_CICD_REPO}
+          Target ref:       ${{ steps.resolve.outputs.nm_cicd_ref }}
+
+          Omni repo:        ${GITHUB_REPOSITORY}
+          Omni ref:         ${{ steps.resolve.outputs.omni_ref }}
+          vLLM ref:         ${{ steps.resolve.outputs.vllm_ref }}
+          vLLM version:     ${{ steps.resolve.outputs.vllm_version || '(not set)' }}
+          Target device:    ${{ steps.resolve.outputs.target_device }}
+          Wheel label:      ${{ steps.resolve.outputs.build_label_wheel }}
+          Image label:      ${{ steps.resolve.outputs.build_label_image }}
+
+          vLLM run ID:      ${{ steps.resolve.outputs.vllm_run_id || '(n/a)' }}
+          Omni run ID:      ${{ steps.resolve.outputs.omni_run_id || '(n/a)' }}
+
+          Requested by:     ${GITHUB_ACTOR}
+          Source run:        ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          ======================================
+          EOF
+
+  # ---------------------------------------------------------------------------
+  # vllm-wheel — build base vLLM wheel (standalone only)
+  # ---------------------------------------------------------------------------
+  vllm-wheel:
+    needs: [resolve]
+    if: needs.resolve.outputs.build_step == 'vllm-wheel'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger vLLM wheel build
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh workflow run build-whl.yml \
+            --repo "${NM_CICD_REPO}" \
+            --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
+            -f repo=neuralmagic/nm-vllm-ent \
+            -f branch="${{ needs.resolve.outputs.vllm_ref }}" \
+            -f target_device="${{ needs.resolve.outputs.target_device }}" \
+            -f python=3.12.5 \
+            -f build_label="${{ needs.resolve.outputs.build_label_wheel }}" \
+            -f timeout=120 \
+            -f partitions_file=neuralmagic/configs/partitions/minimal.yml
+
+          echo "Triggered build-whl.yml for nm-vllm-ent"
+
+      - name: Poll for triggered run
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          NM_CICD_REPO: neuralmagic/nm-cicd
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2153
+          NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
+          echo "Polling for triggered run..."
+
+          TRIGGERED_RUN_ID=""
+          for attempt in $(seq 1 6); do
+            sleep 5
+            TRIGGERED_RUN_ID=$(gh run list \
+              --repo "${NM_CICD_REPO}" \
+              --workflow build-whl.yml \
+              --branch "${NM_CICD_REF}" \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty') || true
+
+            if [[ -n "${TRIGGERED_RUN_ID}" ]]; then
+              echo "Found run: ${TRIGGERED_RUN_ID}"
+              break
+            fi
+            echo "Attempt ${attempt}/6: not yet visible..."
+          done
+
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${TRIGGERED_RUN_ID}"
+
+          if [[ -n "${TRIGGERED_RUN_ID}" ]]; then
+            {
+              echo "## Midstream Build — vllm-wheel"
+              echo ""
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| **nm-cicd run** | [${TRIGGERED_RUN_ID}](${RUN_URL}) |"
+              echo "| **vLLM ref** | \`${{ needs.resolve.outputs.vllm_ref }}\` |"
+              echo "| **Target device** | \`${{ needs.resolve.outputs.target_device }}\` |"
+              echo "| **Requested by** | ${GITHUB_ACTOR} |"
+              echo ""
+              echo "### Next steps"
+              echo ""
+              echo "Once this run completes, trigger the **omni-wheel** step:"
+              echo "\`\`\`"
+              echo "build_step: omni-wheel"
+              echo "vllm_run_id: ${TRIGGERED_RUN_ID}"
+              echo "\`\`\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "::warning::Could not find the triggered run after 30s."
+            {
+              echo "## Midstream Build — vllm-wheel"
+              echo ""
+              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # omni-wheel — build vllm-omni wheel
+  # Runs standalone (omni-wheel) or as first step of full-chain
+  # ---------------------------------------------------------------------------
+  omni-wheel:
+    needs: [resolve]
+    if: >-
+      needs.resolve.outputs.build_step == 'omni-wheel' ||
+      needs.resolve.outputs.build_step == 'full-chain'
+    runs-on: ubuntu-latest
+    outputs:
+      omni_run_id: ${{ steps.poll.outputs.omni_run_id }}
+
+    steps:
+      - name: Trigger omni wheel build
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh workflow run build-whl.yml \
+            --repo "${NM_CICD_REPO}" \
+            --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
+            -f repo=neuralmagic/nm-vllm-omni-ent \
+            -f branch="${{ needs.resolve.outputs.omni_ref }}" \
+            -f target_device="${{ needs.resolve.outputs.target_device }}" \
+            -f python=3.12.5 \
+            -f build_label="${{ needs.resolve.outputs.build_label_wheel }}" \
+            -f timeout=120 \
+            -f partitions_file=neuralmagic/configs/partitions/minimal.yml \
+            -f vllm_run_id="${{ needs.resolve.outputs.vllm_run_id }}"
+
+          echo "Triggered build-whl.yml for nm-vllm-omni-ent"
+
+      - name: Poll for triggered run
+        id: poll
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          NM_CICD_REPO: neuralmagic/nm-cicd
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2153
+          NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
+          echo "Polling for triggered run..."
+
+          OMNI_RUN_ID=""
+          for attempt in $(seq 1 6); do
+            sleep 5
+            OMNI_RUN_ID=$(gh run list \
+              --repo "${NM_CICD_REPO}" \
+              --workflow build-whl.yml \
+              --branch "${NM_CICD_REF}" \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty') || true
+
+            if [[ -n "${OMNI_RUN_ID}" ]]; then
+              echo "Found run: ${OMNI_RUN_ID}"
+              break
+            fi
+            echo "Attempt ${attempt}/6: not yet visible..."
+          done
+
+          echo "omni_run_id=${OMNI_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${OMNI_RUN_ID}"
+
+          if [[ -n "${OMNI_RUN_ID}" ]]; then
+            {
+              echo "## Midstream Build — omni-wheel"
+              echo ""
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| **nm-cicd run** | [${OMNI_RUN_ID}](${RUN_URL}) |"
+              echo "| **Omni ref** | \`${{ needs.resolve.outputs.omni_ref }}\` |"
+              echo "| **vLLM run ID** | \`${{ needs.resolve.outputs.vllm_run_id }}\` |"
+              echo "| **Target device** | \`${{ needs.resolve.outputs.target_device }}\` |"
+              echo "| **Requested by** | ${GITHUB_ACTOR} |"
+            } >> "${GITHUB_STEP_SUMMARY}"
+
+            if [[ "${{ needs.resolve.outputs.build_step }}" == "omni-wheel" ]]; then
+              {
+                echo ""
+                echo "### Next steps"
+                echo ""
+                echo "Once this run completes, trigger the **docker-image** step:"
+                echo "\`\`\`"
+                echo "build_step: docker-image"
+                echo "vllm_run_id: ${{ needs.resolve.outputs.vllm_run_id }}"
+                echo "omni_run_id: ${OMNI_RUN_ID}"
+                echo "\`\`\`"
+              } >> "${GITHUB_STEP_SUMMARY}"
+            else
+              {
+                echo ""
+                echo "> Full-chain mode: waiting for this run to complete, then triggering docker-image automatically."
+              } >> "${GITHUB_STEP_SUMMARY}"
+            fi
+          else
+            echo "::warning::Could not find the triggered run after 30s."
+            {
+              echo "## Midstream Build — omni-wheel"
+              echo ""
+              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Wait for omni wheel to complete
+        if: needs.resolve.outputs.build_step == 'full-chain' && steps.poll.outputs.omni_run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OMNI_RUN_ID="${{ steps.poll.outputs.omni_run_id }}"
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${OMNI_RUN_ID}"
+          echo "Waiting for omni wheel build ${OMNI_RUN_ID} to complete..."
+          echo "Run: ${RUN_URL}"
+
+          MAX_ATTEMPTS=60  # ~3 hours at 3-min intervals
+          for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
+            STATUS=$(gh run view "${OMNI_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json status,conclusion \
+              --jq '.status') || true
+
+            CONCLUSION=$(gh run view "${OMNI_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json conclusion \
+              --jq '.conclusion') || true
+
+            echo "[$(date -u +%H:%M:%S)] Attempt ${attempt}/${MAX_ATTEMPTS}: status=${STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" == "success" ]]; then
+                echo "Omni wheel build completed successfully!"
+                break
+              else
+                echo "::error::Omni wheel build finished with conclusion: ${CONCLUSION}"
+                echo "See: ${RUN_URL}"
+                exit 1
+              fi
+            fi
+
+            sleep 180  # 3 minutes between polls
+          done
+
+          if [[ "${STATUS}" != "completed" ]]; then
+            echo "::error::Timed out waiting for omni wheel build after ~3 hours"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # docker-image — build container image
+  # Runs standalone (docker-image) or as second step of full-chain
+  # ---------------------------------------------------------------------------
+  docker-image:
+    needs: [resolve, omni-wheel]
+    if: >-
+      always() && (
+        (needs.resolve.outputs.build_step == 'docker-image') ||
+        (needs.resolve.outputs.build_step == 'full-chain' && needs.omni-wheel.result == 'success')
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      image_run_id: ${{ steps.poll.outputs.image_run_id }}
+
+    steps:
+      - name: Resolve omni run ID
+        id: image-inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # For full-chain, use the omni-wheel job output
+          # For standalone docker-image, use the input
+          OMNI_RUN_ID="${{ needs.omni-wheel.outputs.omni_run_id || needs.resolve.outputs.omni_run_id }}"
+
+          if [[ -z "${OMNI_RUN_ID}" ]]; then
+            echo "::error::No omni_run_id available — omni-wheel job may have failed to detect the run"
+            exit 1
+          fi
+
+          echo "omni_run_id=${OMNI_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Trigger docker image build
+        id: trigger
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "before_ts=${BEFORE_TS}" >> "${GITHUB_OUTPUT}"
+
+          BAKE_TARGETS="${{ needs.resolve.outputs.target_device }}"
+          if [[ "${BAKE_TARGETS}" == "cuda" ]]; then
+            BAKE_TARGETS="cuda cuda-develsdk cuda-test"
+          fi
+
+          gh workflow run build-image.yml \
+            --repo "${NM_CICD_REPO}" \
+            --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
+            -f repo=neuralmagic/nm-vllm-omni-ent \
+            -f branch="${{ needs.resolve.outputs.omni_ref }}" \
+            -f target_device="${{ needs.resolve.outputs.target_device }}" \
+            -f build_label="${{ needs.resolve.outputs.build_label_image }}" \
+            -f run_id="${{ steps.image-inputs.outputs.omni_run_id }}" \
+            -f vllm_run_id="${{ needs.resolve.outputs.vllm_run_id }}" \
+            -f bake_targets="${BAKE_TARGETS}"
+
+          echo "Triggered build-image.yml for nm-vllm-omni-ent (bake targets: ${BAKE_TARGETS})"
+
+      - name: Poll for triggered run
+        id: poll
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          NM_CICD_REPO: neuralmagic/nm-cicd
+        shell: bash
+        run: |
+          set -euo pipefail
+          NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
+          BEFORE_TS="${{ steps.trigger.outputs.before_ts }}"
+          echo "Polling for image build run created after ${BEFORE_TS}..."
+
+          IMAGE_RUN_ID=""
+          for attempt in $(seq 1 6); do
+            sleep 5
+            IMAGE_RUN_ID=$(gh run list \
+              --repo "${NM_CICD_REPO}" \
+              --workflow build-image.yml \
+              --branch "${NM_CICD_REF}" \
+              --limit 5 \
+              --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt > \"${BEFORE_TS}\")] | sort_by(.createdAt) | first | .databaseId // empty") || true
+
+            if [[ -n "${IMAGE_RUN_ID}" ]]; then
+              echo "Found run: ${IMAGE_RUN_ID}"
+              break
+            fi
+            echo "Attempt ${attempt}/6: not yet visible..."
+          done
+
+          echo "image_run_id=${IMAGE_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${IMAGE_RUN_ID}"
+
+          if [[ -n "${IMAGE_RUN_ID}" ]]; then
+            {
+              echo "## Midstream Build — docker-image"
+              echo ""
+              echo "| Field | Value |"
+              echo "|-------|-------|"
+              echo "| **nm-cicd run** | [${IMAGE_RUN_ID}](${RUN_URL}) |"
+              echo "| **Omni ref** | \`${{ needs.resolve.outputs.omni_ref }}\` |"
+              echo "| **Omni run ID** | \`${{ steps.image-inputs.outputs.omni_run_id }}\` |"
+              echo "| **vLLM run ID** | \`${{ needs.resolve.outputs.vllm_run_id }}\` |"
+              echo "| **Target device** | \`${{ needs.resolve.outputs.target_device }}\` |"
+              echo "| **Requested by** | ${GITHUB_ACTOR} |"
+              echo ""
+              echo "Image build triggered. Waiting for completion..."
+            } >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "::warning::Could not find the triggered run after 30s."
+            {
+              echo "## Midstream Build — docker-image"
+              echo ""
+              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Wait for image build to complete
+        if: steps.poll.outputs.image_run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_RUN_ID="${{ steps.poll.outputs.image_run_id }}"
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${IMAGE_RUN_ID}"
+          echo "Waiting for image build ${IMAGE_RUN_ID} to complete..."
+          echo "Run: ${RUN_URL}"
+
+          MAX_ATTEMPTS=40  # ~2 hours at 3-min intervals
+          STATUS=""
+          for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
+            STATUS=$(gh run view "${IMAGE_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json status \
+              --jq '.status') || true
+
+            CONCLUSION=$(gh run view "${IMAGE_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json conclusion \
+              --jq '.conclusion') || true
+
+            echo "[$(date -u +%H:%M:%S)] Attempt ${attempt}/${MAX_ATTEMPTS}: status=${STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" == "success" ]]; then
+                echo "Image build completed successfully!"
+                break
+              else
+                echo "::error::Image build finished with conclusion: ${CONCLUSION}"
+                echo "See: ${RUN_URL}"
+                exit 1
+              fi
+            fi
+
+            sleep 180
+          done
+
+          if [[ "${STATUS}" != "completed" ]]; then
+            echo "::error::Timed out waiting for image build after ~2 hours"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # smoke-test — validate built images across models and CUDA variants
+  # Triggers test-vllm-omni.yml on nm-cicd after docker-image completes.
+  # Bake builds both cuda + cuda-develsdk tags from one IMAGE_RUN_ID.
+  # Polling matches on vllm_image input to avoid race with parallel matrix jobs.
+  # ---------------------------------------------------------------------------
+  smoke-test:
+    needs: [resolve, docker-image]
+    if: >-
+      needs.resolve.outputs.build_step == 'full-chain' &&
+      needs.docker-image.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - model: Tongyi-MAI/Z-Image-Turbo
+            validation_type: image_gen
+            variant: cuda
+            label_suffix: img-cuda
+          - model: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+            validation_type: tts
+            variant: cuda
+            label_suffix: tts-cuda
+            tts_voice: vivian
+          - model: Tongyi-MAI/Z-Image-Turbo
+            validation_type: image_gen
+            variant: cuda-develsdk
+            label_suffix: img-devsdk
+          - model: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+            validation_type: tts
+            variant: cuda-develsdk
+            label_suffix: tts-devsdk
+            tts_voice: vivian
+          - model: black-forest-labs/FLUX.1-schnell
+            validation_type: image_gen
+            variant: cuda
+            label_suffix: flux1-cuda
+          - model: black-forest-labs/FLUX.1-schnell
+            validation_type: image_gen
+            variant: cuda-develsdk
+            label_suffix: flux1-devsdk
+          - model: black-forest-labs/FLUX.2-klein-4B
+            validation_type: image_gen
+            variant: cuda
+            label_suffix: flux2klein-cuda
+          - model: black-forest-labs/FLUX.2-klein-4B
+            validation_type: image_gen
+            variant: cuda-develsdk
+            label_suffix: flux2klein-devsdk
+          - model: black-forest-labs/FLUX.2-dev
+            validation_type: image_gen
+            variant: cuda
+            label_suffix: flux2dev-cuda
+            tensor_parallel_size: "2"
+          - model: black-forest-labs/FLUX.2-dev
+            validation_type: image_gen
+            variant: cuda-develsdk
+            label_suffix: flux2dev-devsdk
+            tensor_parallel_size: "2"
+          - model: mistralai/Voxtral-4B-TTS-2603
+            validation_type: tts
+            variant: cuda
+            label_suffix: voxtral-cuda
+            tts_voice: neutral_female
+          - model: mistralai/Voxtral-4B-TTS-2603
+            validation_type: tts
+            variant: cuda-develsdk
+            label_suffix: voxtral-devsdk
+            tts_voice: neutral_female
+          - model: Qwen/Qwen3-Omni-30B-A3B-Instruct
+            validation_type: omni
+            variant: cuda
+            label_suffix: qwen3omni-cuda
+            gpu_count: "2"
+          - model: Qwen/Qwen3-Omni-30B-A3B-Instruct
+            validation_type: omni
+            variant: cuda-develsdk
+            label_suffix: qwen3omni-devsdk
+            gpu_count: "2"
+    name: "smoke-test (${{ matrix.label_suffix }})"
+
+    steps:
+      - name: Trigger smoke test
+        id: trigger
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          NM_CICD_REPO: neuralmagic/nm-cicd
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_RUN_ID="${{ needs.docker-image.outputs.image_run_id }}"
+          NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
+          VLLM_IMAGE="quay.io/vllm/automation-vllm-omni:${{ matrix.variant }}-${IMAGE_RUN_ID}"
+
+          echo "Triggering smoke test:"
+          echo "  Image: ${VLLM_IMAGE}"
+          echo "  Model: ${{ matrix.model }}"
+          echo "  Validation: ${{ matrix.validation_type }}"
+
+          BEFORE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "before_ts=${BEFORE_TS}" >> "${GITHUB_OUTPUT}"
+
+          gh workflow run test-vllm-omni.yml \
+            --repo "${NM_CICD_REPO}" \
+            --ref "${NM_CICD_REF}" \
+            -f vllm_image="${VLLM_IMAGE}" \
+            -f model="${{ matrix.model }}" \
+            -f target_device=cuda \
+            -f validation_type="${{ matrix.validation_type }}" \
+            -f label=ibm-wdc-k8s-h100-util \
+            -f timeout=60 \
+            -f tensor_parallel_size=${{ matrix.tensor_parallel_size || '1' }} \
+            -f gpu_count=${{ matrix.gpu_count || '' }} \
+            -f tts_voice=${{ matrix.tts_voice || '' }}
+
+          echo "vllm_image=${VLLM_IMAGE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Poll for triggered run
+        id: poll
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          NM_CICD_REPO: neuralmagic/nm-cicd
+        shell: bash
+        run: |
+          set -euo pipefail
+          NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
+          BEFORE_TS="${{ steps.trigger.outputs.before_ts }}"
+          EXPECTED_IMAGE="${{ steps.trigger.outputs.vllm_image }}"
+          MODEL="${{ matrix.model }}"
+          echo "Polling for smoke test run with image ${EXPECTED_IMAGE}..."
+
+          SMOKE_RUN_ID=""
+          for attempt in $(seq 1 12); do
+            sleep 5
+
+            CANDIDATE_IDS=$(gh run list \
+              --repo "${NM_CICD_REPO}" \
+              --workflow test-vllm-omni.yml \
+              --branch "${NM_CICD_REF}" \
+              --limit 20 \
+              --json databaseId,displayTitle,createdAt \
+              | jq -r --arg model "${MODEL}" --arg before "${BEFORE_TS}" \
+                '[.[] | select(.createdAt > $before and (.displayTitle | contains($model)))] | .[].databaseId') || true
+
+            for CID in ${CANDIDATE_IDS}; do
+              RUN_IMAGE=$(gh api "repos/${NM_CICD_REPO}/actions/runs/${CID}" \
+                --jq '.inputs.vllm_image // empty' 2>/dev/null) || true
+              if [[ "${RUN_IMAGE}" == "${EXPECTED_IMAGE}" ]]; then
+                SMOKE_RUN_ID="${CID}"
+                echo "Found run: ${SMOKE_RUN_ID} (matched on vllm_image input)"
+                break 2
+              fi
+            done
+
+            echo "Attempt ${attempt}/12: no matching run found yet..."
+          done
+
+          echo "smoke_run_id=${SMOKE_RUN_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Wait for smoke test to complete
+        if: steps.poll.outputs.smoke_run_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SMOKE_RUN_ID="${{ steps.poll.outputs.smoke_run_id }}"
+          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${SMOKE_RUN_ID}"
+          echo "Waiting for smoke test ${SMOKE_RUN_ID} to complete..."
+          echo "Run: ${RUN_URL}"
+
+          MAX_ATTEMPTS=20  # ~1 hour at 3-min intervals
+          STATUS=""
+          for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
+            STATUS=$(gh run view "${SMOKE_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json status \
+              --jq '.status') || true
+
+            CONCLUSION=$(gh run view "${SMOKE_RUN_ID}" \
+              --repo "${NM_CICD_REPO}" \
+              --json conclusion \
+              --jq '.conclusion') || true
+
+            echo "[$(date -u +%H:%M:%S)] Attempt ${attempt}/${MAX_ATTEMPTS}: status=${STATUS} conclusion=${CONCLUSION}"
+
+            if [[ "${STATUS}" == "completed" ]]; then
+              if [[ "${CONCLUSION}" == "success" ]]; then
+                echo "Smoke test passed!"
+              else
+                echo "::error::Smoke test failed with conclusion: ${CONCLUSION}"
+                echo "See: ${RUN_URL}"
+              fi
+              break
+            fi
+
+            sleep 180
+          done
+
+          if [[ "${STATUS}" != "completed" ]]; then
+            echo "::error::Timed out waiting for smoke test after ~1 hour"
+          fi
+
+          {
+            echo "## Midstream Build — smoke-test (${{ matrix.label_suffix }})"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| **nm-cicd run** | [${SMOKE_RUN_ID}](${RUN_URL}) |"
+            echo "| **Image** | \`${{ steps.trigger.outputs.vllm_image }}\` |"
+            echo "| **Model** | ${{ matrix.model }} |"
+            echo "| **Validation** | ${{ matrix.validation_type }} |"
+            echo "| **Result** | ${CONCLUSION:-timeout} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ "${CONCLUSION}" != "success" ]]; then
+            exit 1
+          fi

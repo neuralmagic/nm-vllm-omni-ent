@@ -23,12 +23,14 @@ Use the **Omni release** workflow from the [Actions tab](../../actions/workflows
 
 The Ent workflow dispatches once (GitHub App token). The full build+test cycle runs as a **single nm-cicd workflow run** — no cross-repo polling.
 
-| Manual build step | nm-cicd workflow |
-|-------------------|------------------|
+**Legacy:** [Midstream Build](../../actions/workflows/midstream-build.yml) (`midstream-build.yml`) is deprecated; use **Omni release** instead. Removal is planned for a later phase.
+
+| Build Step (legacy) | Replacement |
+|---------------------|-------------|
 | **full-chain** | Omni release (tag or manual with `run_ocp_validation=true`) |
-| **omni-wheel** | `accept-sync.yml` with `build_image=false` |
-| **docker-image** | `accept-sync.yml` with existing `vllm_run_id` + `omni_run_id` |
-| **vllm-wheel** | `build-whl.yml` for `neuralmagic/nm-vllm-ent` (manual) |
+| **omni-wheel** | nm-cicd `accept-sync.yml` with `build_image=false` |
+| **docker-image** | nm-cicd `accept-sync.yml` with existing `vllm_run_id` + `omni_run_id` |
+| **vllm-wheel** | nm-cicd `build-whl.yml` for `neuralmagic/nm-vllm-ent` (manual) |
 
 ### Tag-Based Triggers (Full Chain)
 
@@ -45,6 +47,8 @@ The tag name is freeform — use whatever makes sense: `omni-v0.20.0`, `omni-dou
 ## Secret: CICD_APP_ID / CICD_APP_PRIVATE_KEY
 
 The **Omni release** workflow uses the org GitHub App (`CICD_APP_ID`, `CICD_APP_PRIVATE_KEY`) to dispatch nm-cicd workflows — the same pattern as `nm-vllm-ent` release.
+
+**Legacy:** `midstream-build.yml` used `CICD_OMNI_PAT`; that path is deprecated and will be removed in a later phase.
 
 ## vLLM Version Mapping
 
@@ -129,6 +133,6 @@ gh workflow run build-image.yml --repo neuralmagic/nm-cicd \
 Workflows in `.github/workflows/` are a mix of upstream and midstream:
 
 - **Upstream workflows** (e.g. `build_wheel.yml`, `pre-commit.yml`) — carried forward from `vllm-project/vllm-omni`
-- **Midstream workflows** — `omni-release.yml` (trigger)
+- **Midstream workflows** — `omni-release.yml` (trigger), `midstream-build.yml` (deprecated)
 
 See [.github-upstream-policy.md](.github-upstream-policy.md) for rebase guidelines.
