@@ -63,8 +63,6 @@ on:
 permissions:
   contents: read
 
-env:
-  NM_CICD_REPO: neuralmagic/nm-cicd
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -206,7 +204,7 @@ jobs:
           Midstream Build Request
           ======================================
           Build step:       ${{ steps.resolve.outputs.build_step }}
-          Target repo:      ${NM_CICD_REPO}
+          Target repo:      neuralmagic/nm-cicd
           Target ref:       ${{ steps.resolve.outputs.nm_cicd_ref }}
 
           Omni repo:        ${GITHUB_REPOSITORY}
@@ -242,7 +240,7 @@ jobs:
           set -euo pipefail
 
           gh workflow run build-whl.yml \
-            --repo "${NM_CICD_REPO}" \
+            --repo neuralmagic/nm-cicd \
             --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
             -f repo=neuralmagic/nm-vllm-ent \
             -f branch="${{ needs.resolve.outputs.vllm_ref }}" \
@@ -257,11 +255,9 @@ jobs:
       - name: Poll for triggered run
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
-          NM_CICD_REPO: neuralmagic/nm-cicd
         shell: bash
         run: |
           set -euo pipefail
-          # shellcheck disable=SC2153
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
           echo "Polling for triggered run..."
 
@@ -269,7 +265,7 @@ jobs:
           for attempt in $(seq 1 6); do
             sleep 5
             TRIGGERED_RUN_ID=$(gh run list \
-              --repo "${NM_CICD_REPO}" \
+              --repo neuralmagic/nm-cicd \
               --workflow build-whl.yml \
               --branch "${NM_CICD_REF}" \
               --limit 1 \
@@ -283,7 +279,7 @@ jobs:
             echo "Attempt ${attempt}/6: not yet visible..."
           done
 
-          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${TRIGGERED_RUN_ID}"
+          RUN_URL="https://github.com/neuralmagic/nm-cicd/actions/runs/${TRIGGERED_RUN_ID}"
 
           if [[ -n "${TRIGGERED_RUN_ID}" ]]; then
             {
@@ -309,7 +305,7 @@ jobs:
             {
               echo "## Midstream Build — vllm-wheel"
               echo ""
-              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
+              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/neuralmagic/nm-cicd/actions) manually."
             } >> "${GITHUB_STEP_SUMMARY}"
           fi
 
@@ -335,7 +331,7 @@ jobs:
           set -euo pipefail
 
           gh workflow run build-whl.yml \
-            --repo "${NM_CICD_REPO}" \
+            --repo neuralmagic/nm-cicd \
             --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
             -f repo=neuralmagic/nm-vllm-omni-ent \
             -f branch="${{ needs.resolve.outputs.omni_ref }}" \
@@ -352,11 +348,9 @@ jobs:
         id: poll
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
-          NM_CICD_REPO: neuralmagic/nm-cicd
         shell: bash
         run: |
           set -euo pipefail
-          # shellcheck disable=SC2153
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
           echo "Polling for triggered run..."
 
@@ -364,7 +358,7 @@ jobs:
           for attempt in $(seq 1 6); do
             sleep 5
             OMNI_RUN_ID=$(gh run list \
-              --repo "${NM_CICD_REPO}" \
+              --repo neuralmagic/nm-cicd \
               --workflow build-whl.yml \
               --branch "${NM_CICD_REF}" \
               --limit 1 \
@@ -380,7 +374,7 @@ jobs:
 
           echo "omni_run_id=${OMNI_RUN_ID}" >> "${GITHUB_OUTPUT}"
 
-          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${OMNI_RUN_ID}"
+          RUN_URL="https://github.com/neuralmagic/nm-cicd/actions/runs/${OMNI_RUN_ID}"
 
           if [[ -n "${OMNI_RUN_ID}" ]]; then
             {
@@ -418,7 +412,7 @@ jobs:
             {
               echo "## Midstream Build — omni-wheel"
               echo ""
-              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
+              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/neuralmagic/nm-cicd/actions) manually."
             } >> "${GITHUB_STEP_SUMMARY}"
           fi
 
@@ -431,19 +425,19 @@ jobs:
           set -euo pipefail
 
           OMNI_RUN_ID="${{ steps.poll.outputs.omni_run_id }}"
-          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${OMNI_RUN_ID}"
+          RUN_URL="https://github.com/neuralmagic/nm-cicd/actions/runs/${OMNI_RUN_ID}"
           echo "Waiting for omni wheel build ${OMNI_RUN_ID} to complete..."
           echo "Run: ${RUN_URL}"
 
           MAX_ATTEMPTS=60  # ~3 hours at 3-min intervals
           for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
             STATUS=$(gh run view "${OMNI_RUN_ID}" \
-              --repo "${NM_CICD_REPO}" \
+              --repo neuralmagic/nm-cicd \
               --json status,conclusion \
               --jq '.status') || true
 
             CONCLUSION=$(gh run view "${OMNI_RUN_ID}" \
-              --repo "${NM_CICD_REPO}" \
+              --repo neuralmagic/nm-cicd \
               --json conclusion \
               --jq '.conclusion') || true
 
@@ -518,7 +512,7 @@ jobs:
           fi
 
           gh workflow run build-image.yml \
-            --repo "${NM_CICD_REPO}" \
+            --repo neuralmagic/nm-cicd \
             --ref "${{ needs.resolve.outputs.nm_cicd_ref }}" \
             -f repo=neuralmagic/nm-vllm-omni-ent \
             -f branch="${{ needs.resolve.outputs.omni_ref }}" \
@@ -534,7 +528,6 @@ jobs:
         id: poll
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
-          NM_CICD_REPO: neuralmagic/nm-cicd
         shell: bash
         run: |
           set -euo pipefail
@@ -546,7 +539,7 @@ jobs:
           for attempt in $(seq 1 6); do
             sleep 5
             IMAGE_RUN_ID=$(gh run list \
-              --repo "${NM_CICD_REPO}" \
+              --repo neuralmagic/nm-cicd \
               --workflow build-image.yml \
               --branch "${NM_CICD_REF}" \
               --limit 5 \
@@ -562,7 +555,7 @@ jobs:
 
           echo "image_run_id=${IMAGE_RUN_ID}" >> "${GITHUB_OUTPUT}"
 
-          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${IMAGE_RUN_ID}"
+          RUN_URL="https://github.com/neuralmagic/nm-cicd/actions/runs/${IMAGE_RUN_ID}"
 
           if [[ -n "${IMAGE_RUN_ID}" ]]; then
             {
@@ -584,7 +577,7 @@ jobs:
             {
               echo "## Midstream Build — docker-image"
               echo ""
-              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/${NM_CICD_REPO}/actions) manually."
+              echo "> **Warning:** Run not detected within 30s. Check [nm-cicd Actions](https://github.com/neuralmagic/nm-cicd/actions) manually."
             } >> "${GITHUB_STEP_SUMMARY}"
           fi
 
@@ -597,7 +590,7 @@ jobs:
           set -euo pipefail
 
           IMAGE_RUN_ID="${{ steps.poll.outputs.image_run_id }}"
-          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${IMAGE_RUN_ID}"
+          RUN_URL="https://github.com/neuralmagic/nm-cicd/actions/runs/${IMAGE_RUN_ID}"
           echo "Waiting for image build ${IMAGE_RUN_ID} to complete..."
           echo "Run: ${RUN_URL}"
 
@@ -605,12 +598,12 @@ jobs:
           STATUS=""
           for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
             STATUS=$(gh run view "${IMAGE_RUN_ID}" \
-              --repo "${NM_CICD_REPO}" \
+              --repo neuralmagic/nm-cicd \
               --json status \
               --jq '.status') || true
 
             CONCLUSION=$(gh run view "${IMAGE_RUN_ID}" \
-              --repo "${NM_CICD_REPO}" \
+              --repo neuralmagic/nm-cicd \
               --json conclusion \
               --jq '.conclusion') || true
 
@@ -722,7 +715,6 @@ jobs:
         id: trigger
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
-          NM_CICD_REPO: neuralmagic/nm-cicd
         shell: bash
         run: |
           set -euo pipefail
@@ -740,7 +732,7 @@ jobs:
           echo "before_ts=${BEFORE_TS}" >> "${GITHUB_OUTPUT}"
 
           gh workflow run test-vllm-omni.yml \
-            --repo "${NM_CICD_REPO}" \
+            --repo neuralmagic/nm-cicd \
             --ref "${NM_CICD_REF}" \
             -f vllm_image="${VLLM_IMAGE}" \
             -f model="${{ matrix.model }}" \
@@ -758,7 +750,6 @@ jobs:
         id: poll
         env:
           GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
-          NM_CICD_REPO: neuralmagic/nm-cicd
         shell: bash
         run: |
           set -euo pipefail
@@ -773,7 +764,7 @@ jobs:
             sleep 5
 
             CANDIDATE_IDS=$(gh run list \
-              --repo "${NM_CICD_REPO}" \
+              --repo neuralmagic/nm-cicd \
               --workflow test-vllm-omni.yml \
               --branch "${NM_CICD_REF}" \
               --limit 20 \
@@ -782,7 +773,7 @@ jobs:
                 '[.[] | select(.createdAt > $before and (.displayTitle | contains($model)))] | .[].databaseId') || true
 
             for CID in ${CANDIDATE_IDS}; do
-              RUN_IMAGE=$(gh api "repos/${NM_CICD_REPO}/actions/runs/${CID}" \
+              RUN_IMAGE=$(gh api "repos/neuralmagic/nm-cicd/actions/runs/${CID}" \
                 --jq '.inputs.vllm_image // empty' 2>/dev/null) || true
               if [[ "${RUN_IMAGE}" == "${EXPECTED_IMAGE}" ]]; then
                 SMOKE_RUN_ID="${CID}"
@@ -805,7 +796,7 @@ jobs:
           set -euo pipefail
 
           SMOKE_RUN_ID="${{ steps.poll.outputs.smoke_run_id }}"
-          RUN_URL="https://github.com/${NM_CICD_REPO}/actions/runs/${SMOKE_RUN_ID}"
+          RUN_URL="https://github.com/neuralmagic/nm-cicd/actions/runs/${SMOKE_RUN_ID}"
           echo "Waiting for smoke test ${SMOKE_RUN_ID} to complete..."
           echo "Run: ${RUN_URL}"
 
@@ -813,12 +804,12 @@ jobs:
           STATUS=""
           for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
             STATUS=$(gh run view "${SMOKE_RUN_ID}" \
-              --repo "${NM_CICD_REPO}" \
+              --repo neuralmagic/nm-cicd \
               --json status \
               --jq '.status') || true
 
             CONCLUSION=$(gh run view "${SMOKE_RUN_ID}" \
-              --repo "${NM_CICD_REPO}" \
+              --repo neuralmagic/nm-cicd \
               --json conclusion \
               --jq '.conclusion') || true
 
