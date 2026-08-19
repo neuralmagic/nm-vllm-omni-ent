@@ -20,7 +20,7 @@ Use the **Omni release** workflow from the [Actions tab](../../actions/workflows
 |---------|--------------|
 | Push tag `omni-*` | Full pipeline in nm-cicd: accept-sync + OCP validation (`wf_category=RELEASE`) |
 | Manual **Omni release** | Dispatch to nm-cicd `omni-pipeline.yml` — choose ref, category, and whether to run OCP validation |
-| PR label `build-omni` | [Omni release](../../actions/workflows/omni-release.yml) — full pipeline + commit status on PR |
+| Pull request (open / push) | [Omni release](../../actions/workflows/omni-release.yml) — full pipeline + commit status on PR |
 
 The Ent workflow dispatches once (GitHub App token). The full build+test cycle runs as a **single nm-cicd workflow run** — no cross-repo polling.
 
@@ -132,6 +132,6 @@ gh workflow run build-image.yml --repo neuralmagic/nm-cicd \
 Workflows in `.github/workflows/` are a mix of upstream and midstream:
 
 - **Upstream workflows** (e.g. `build_wheel.yml`, `pre-commit.yml`) — carried forward from `vllm-project/vllm-omni`
-- **Midstream workflows** — `omni-release.yml` (tag, PR label, manual), `midstream-build.yml` (deprecated)
+- **Midstream workflows** — `omni-release.yml` (tag, pull request, manual), `midstream-build.yml` (deprecated)
 
 See [.github-upstream-policy.md](.github-upstream-policy.md) for rebase guidelines.
