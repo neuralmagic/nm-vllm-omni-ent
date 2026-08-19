@@ -488,7 +488,7 @@ def test_update_intermediate_buffer_skips_unknown_req_id():
 def test_streaming_input_update_merges_model_intermediate_buffer():
     runner = _make_runner(req_ids=("r1",), hidden_size=4)
     runner.model_intermediate_buffer["r1"] = {
-        "duplex": {
+        "session": {
             "session_id": "sid",
             "seq": 1,
         }
@@ -496,7 +496,7 @@ def test_streaming_input_update_merges_model_intermediate_buffer():
     runner.requests["r1"].additional_information_cpu = runner.model_intermediate_buffer["r1"]
     new_req_data = SimpleNamespace(
         model_intermediate_buffer={
-            "duplex": {
+            "session": {
                 "session_id": "sid",
                 "seq": 2,
                 "payload": {"type": "audio"},
@@ -508,9 +508,9 @@ def test_streaming_input_update_merges_model_intermediate_buffer():
     OmniGPUModelRunner._update_streaming_input_additional_info(runner, new_req_data, "r1")
 
     info = runner.model_intermediate_buffer["r1"]
-    assert info["duplex"]["session_id"] == "sid"
-    assert info["duplex"]["seq"] == 2
-    assert info["duplex"]["payload"] == {"type": "audio"}
+    assert info["session"]["session_id"] == "sid"
+    assert info["session"]["seq"] == 2
+    assert info["session"]["payload"] == {"type": "audio"}
     assert runner.requests["r1"].additional_information_cpu is info
 
 

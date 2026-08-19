@@ -18,7 +18,7 @@ import uuid
 import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 import janus
 import torch
@@ -32,8 +32,6 @@ from vllm.v1.engine.input_processor import InputProcessor
 
 from vllm_omni.config.config_factory import StageConfigFactory, with_trust_remote_code_override
 from vllm_omni.config.stage_config import (
-    DuplexSessionRuntimeConfig,
-    load_deploy_config,
     strip_parent_engine_args,
 )
 from vllm_omni.diffusion.data import DiffusionParallelConfig, parse_attention_config
@@ -76,11 +74,6 @@ from vllm_omni.inputs.data import OmniInteractionPrompt, OmniSamplingParams
 from vllm_omni.metrics.prometheus import OmniRequestCounter
 
 logger = init_logger(__name__)
-
-if TYPE_CHECKING:
-    from vllm_omni.experimental.fullduplex.engine.duplex_control_client import DuplexControlClient
-    from vllm_omni.experimental.fullduplex.engine.lease import DuplexLeaseActivity
-    from vllm_omni.experimental.fullduplex.engine.messages import DuplexFence
 
 _STARTUP_POLL_INTERVAL_S = 1.0
 _REQUEST_QUEUE_MAXSIZE = 256
@@ -224,17 +217,8 @@ class AsyncOmniEngine:
             trust_remote_code=bool(trust_remote_code),
             deploy_config_path=deploy_config_path,
         )
+        self.pipeline_config = pipeline_config
         self.endpoint_restrictions = pipeline_config.endpoint_restrictions if pipeline_config is not None else ()
-        self._duplex_runtime_extension_path = (
-            pipeline_config.duplex_runtime_extension if pipeline_config is not None else None
-        )
-        self.duplex_serving_adapter_path = (
-            pipeline_config.duplex_serving_adapter if pipeline_config is not None else None
-        )
-        self._duplex_control_enabled = bool(pipeline_config and pipeline_config.duplex_control_enabled)
-        self.duplex_session_config = DuplexSessionRuntimeConfig()
-        if deploy_config_path is not None:
-            self.duplex_session_config = load_deploy_config(deploy_config_path).duplex_session
 
         # Tri-state: None means "not specified" — the deploy yaml's per-stage
         # trust_remote_code stays in effect. An explicit True/False here is a
@@ -268,7 +252,6 @@ class AsyncOmniEngine:
         self._shutdown_called = False
         self._weak_finalizer: weakref.finalize | None = None
         self._correlated_rpc_client: CorrelatedRpcClient | None = None
-        self._duplex_control_client: DuplexControlClient | None = None
         self._running_counter = OmniRequestCounter()
 
         logger.info(f"[AsyncOmniEngine] Launching Orchestrator thread with {self.num_stages} stages")
@@ -394,21 +377,6 @@ class AsyncOmniEngine:
             pd_config = self._detect_pd_config()
 
             membership_controller = self._runtime.create_membership_controller()
-            duplex_runtime_extension = None
-            if self._duplex_control_enabled:
-                from vllm_omni.experimental.fullduplex.engine.duplex_runtime import (
-                    load_duplex_runtime_extension,
-                    validate_duplex_runtime_extension,
-                )
-
-                duplex_runtime_extension = load_duplex_runtime_extension(
-                    getattr(self, "_duplex_runtime_extension_path", None)
-                )
-                if duplex_runtime_extension is not None:
-                    validate_duplex_runtime_extension(
-                        duplex_runtime_extension,
-                        sampling_defaults=tuple(pool.stage_client.default_sampling_params for pool in self.stage_pools),
-                    )
 
             orchestrator = Orchestrator(
                 request_async_queue=self.request_queue.async_q,
@@ -422,9 +390,6 @@ class AsyncOmniEngine:
                 transfer_emitter=self._transfer_emitter,
                 log_stats=self._log_stats,
                 enable_orch_monitor=self._enable_orch_monitor,
-                duplex_runtime_extension=duplex_runtime_extension,
-                enable_duplex_control=self._duplex_control_enabled,
-                duplex_session_config=self.duplex_session_config,
             )
             if not startup_future.done():
                 startup_future.set_result(asyncio.get_running_loop())
@@ -1433,268 +1398,6 @@ class AsyncOmniEngine:
             final_output_stage_ids=final_output_stage_ids,
             arrival_time=arrival_time,
             resumable=resumable,
-        )
-
-    def open_duplex_session(
-        self,
-        session_id: str,
-        *,
-        session_mode: str = "duplex",
-        capabilities: dict[str, object] | None = None,
-        session_config: dict[str, object] | None = None,
-        runtime_config: dict[str, object] | None = None,
-        fence: DuplexFence,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        """Open an engine-level duplex session."""
-        return self._get_duplex_control_client().open(
-            session_id,
-            session_mode=session_mode,
-            capabilities=capabilities,
-            session_config=session_config,
-            runtime_config=runtime_config,
-            fence=fence,
-            timeout=timeout,
-        )
-
-    async def open_duplex_session_async(
-        self,
-        session_id: str,
-        *,
-        session_mode: str = "duplex",
-        capabilities: dict[str, object] | None = None,
-        session_config: dict[str, object] | None = None,
-        runtime_config: dict[str, object] | None = None,
-        fence: DuplexFence,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        """Async wrapper for opening an engine-level duplex session."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.open_duplex_session(
-                session_id,
-                session_mode=session_mode,
-                capabilities=capabilities,
-                session_config=session_config,
-                runtime_config=runtime_config,
-                fence=fence,
-                timeout=timeout,
-            ),
-        )
-
-    def append_duplex_input(
-        self,
-        session_id: str,
-        *,
-        mode: str,
-        payload: object,
-        operation_id: str | None = None,
-        final: bool = False,
-        expected_epoch: int | None = None,
-        fence: DuplexFence,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        """Append input to an engine-level duplex session."""
-        return self._get_duplex_control_client().append(
-            session_id,
-            mode=mode,
-            payload=payload,
-            operation_id=operation_id,
-            final=final,
-            expected_epoch=expected_epoch,
-            fence=fence,
-            timeout=timeout,
-        )
-
-    async def append_duplex_input_async(
-        self,
-        session_id: str,
-        *,
-        mode: str,
-        payload: object,
-        operation_id: str | None = None,
-        final: bool = False,
-        expected_epoch: int | None = None,
-        fence: DuplexFence,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        """Async wrapper for appending duplex input."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.append_duplex_input(
-                session_id,
-                mode=mode,
-                payload=payload,
-                operation_id=operation_id,
-                final=final,
-                expected_epoch=expected_epoch,
-                fence=fence,
-                timeout=timeout,
-            ),
-        )
-
-    def signal_duplex_turn(
-        self,
-        session_id: str,
-        *,
-        event: str,
-        fence: DuplexFence,
-        next_fence: DuplexFence | None = None,
-        session_config: dict[str, object] | None = None,
-        runtime_config: dict[str, object] | None = None,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        """Signal an engine-level duplex turn."""
-        return self._get_duplex_control_client().signal(
-            session_id,
-            event=event,
-            fence=fence,
-            next_fence=next_fence,
-            session_config=session_config,
-            runtime_config=runtime_config,
-            timeout=timeout,
-        )
-
-    async def signal_duplex_turn_async(
-        self,
-        session_id: str,
-        *,
-        event: str,
-        fence: DuplexFence,
-        next_fence: DuplexFence | None = None,
-        session_config: dict[str, object] | None = None,
-        runtime_config: dict[str, object] | None = None,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        """Async wrapper for signaling a duplex turn."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.signal_duplex_turn(
-                session_id,
-                event=event,
-                fence=fence,
-                next_fence=next_fence,
-                session_config=session_config,
-                runtime_config=runtime_config,
-                timeout=timeout,
-            ),
-        )
-
-    def close_duplex_session(
-        self,
-        session_id: str,
-        *,
-        reason: str = "client_close",
-        fence: DuplexFence,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        """Close an engine-level duplex session."""
-        return self._get_duplex_control_client().close(
-            session_id,
-            reason=reason,
-            fence=fence,
-            timeout=timeout,
-        )
-
-    def touch_duplex_session(
-        self,
-        session_id: str,
-        *,
-        fence: DuplexFence,
-        activity: DuplexLeaseActivity,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        return self._get_duplex_control_client().touch(
-            session_id,
-            fence=fence,
-            activity=activity,
-            timeout=timeout,
-        )
-
-    async def touch_duplex_session_async(
-        self,
-        session_id: str,
-        *,
-        fence: DuplexFence,
-        activity: DuplexLeaseActivity,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.touch_duplex_session(
-                session_id,
-                fence=fence,
-                activity=activity,
-                timeout=timeout,
-            ),
-        )
-
-    def resume_duplex_session(
-        self,
-        session_id: str,
-        *,
-        fence: DuplexFence,
-        expected_lease_generation: int,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        return self._get_duplex_control_client().resume(
-            session_id,
-            fence=fence,
-            expected_lease_generation=expected_lease_generation,
-            timeout=timeout,
-        )
-
-    async def resume_duplex_session_async(
-        self,
-        session_id: str,
-        *,
-        fence: DuplexFence,
-        expected_lease_generation: int,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.resume_duplex_session(
-                session_id,
-                fence=fence,
-                expected_lease_generation=expected_lease_generation,
-                timeout=timeout,
-            ),
-        )
-
-    def _get_duplex_control_client(self) -> DuplexControlClient:
-        from vllm_omni.experimental.fullduplex.engine.duplex_control_client import DuplexControlClient
-
-        client = getattr(self, "_duplex_control_client", None)
-        if client is None:
-            transport = getattr(self, "_correlated_rpc_client", None)
-            if transport is None:
-                raise RuntimeError("correlated RPC client is not initialized")
-            client = DuplexControlClient(
-                transport,
-                control_id_factory=lambda: uuid.uuid4().hex,
-            )
-            self._duplex_control_client = client
-        return client
-
-    async def close_duplex_session_async(
-        self,
-        session_id: str,
-        *,
-        reason: str = "client_close",
-        fence: DuplexFence,
-        timeout: float | None = 10.0,
-    ) -> dict[str, object]:
-        """Async wrapper for closing an engine-level duplex session."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.close_duplex_session(session_id, reason=reason, fence=fence, timeout=timeout),
         )
 
     def try_get_output(self, timeout: float = 0.001) -> EngineQueueMessage | None:

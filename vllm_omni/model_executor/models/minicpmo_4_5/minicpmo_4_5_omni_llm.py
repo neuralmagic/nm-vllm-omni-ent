@@ -3871,11 +3871,6 @@ class MiniCPMO45OmniLLMForConditionalGeneration(nn.Module, SupportsMultiModal, S
         else:
             text_config = Qwen2Config.from_dict(config_dict)
             llm_arch = "Qwen2ForCausalLM"
-        from vllm_omni.experimental.fullduplex.minicpmo45.compat import (
-            patch_minicpmo_remote_config,
-        )
-
-        patch_minicpmo_remote_config(text_config)
         text_vllm_config = (
             vllm_config.with_hf_config(text_config)
             if callable(getattr(vllm_config, "with_hf_config", None))

@@ -248,8 +248,6 @@ def test_delta_drains_audio_chunk_metadata_per_step():
     s.add_multimodal_tensor(
         {
             "model_outputs": torch.ones(5),
-            "meta.duplex_epoch": torch.tensor([7], dtype=torch.int32),
-            "meta.duplex_turn_id": torch.tensor([1], dtype=torch.int32),
             "meta.llm_output_text_utf8": segment_utf8,
             "meta.audio_text_total_chars": torch.tensor([len(segment_text)], dtype=torch.int32),
             "meta.tts_is_last_chunk": torch.tensor([0], dtype=torch.int32),
@@ -264,8 +262,6 @@ def test_delta_drains_audio_chunk_metadata_per_step():
     s.add_multimodal_tensor(
         {
             "model_outputs": torch.ones(3),
-            "meta.duplex_epoch": torch.tensor([8], dtype=torch.int32),
-            "meta.duplex_turn_id": torch.tensor([2], dtype=torch.int32),
             "meta.llm_output_text_utf8": segment_utf8,
             "meta.audio_text_total_chars": torch.tensor([len(segment_text)], dtype=torch.int32),
             "meta.tts_is_last_chunk": torch.tensor([1], dtype=torch.int32),
@@ -278,8 +274,6 @@ def test_delta_drains_audio_chunk_metadata_per_step():
     meta2 = result2.outputs[0].multimodal_output["meta"]
     assert bytes(meta2["llm_output_text_utf8"].tolist()).decode("utf-8") == segment_text
     assert meta2["audio_text_total_chars"].tolist() == [len(segment_text)]
-    assert meta2["duplex_epoch"].tolist() == [8]
-    assert meta2["duplex_turn_id"].tolist() == [2]
 
 
 def test_cumulative_audio_replaces_chunk_metadata_per_step():
@@ -290,8 +284,6 @@ def test_cumulative_audio_replaces_chunk_metadata_per_step():
     s.add_multimodal_tensor(
         {
             "model_outputs": torch.ones(5),
-            "meta.duplex_epoch": torch.tensor([7], dtype=torch.int32),
-            "meta.duplex_turn_id": torch.tensor([1], dtype=torch.int32),
             "meta.llm_output_text_utf8": segment_utf8,
             "meta.audio_text_total_chars": torch.tensor([len(segment_text)], dtype=torch.int32),
             "meta.tts_is_last_chunk": torch.tensor([0], dtype=torch.int32),
@@ -305,8 +297,6 @@ def test_cumulative_audio_replaces_chunk_metadata_per_step():
     s.add_multimodal_tensor(
         {
             "model_outputs": torch.ones(3),
-            "meta.duplex_epoch": torch.tensor([8], dtype=torch.int32),
-            "meta.duplex_turn_id": torch.tensor([2], dtype=torch.int32),
             "meta.llm_output_text_utf8": segment_utf8,
             "meta.audio_text_total_chars": torch.tensor([len(segment_text)], dtype=torch.int32),
             "meta.tts_is_last_chunk": torch.tensor([1], dtype=torch.int32),
@@ -321,8 +311,6 @@ def test_cumulative_audio_replaces_chunk_metadata_per_step():
     meta = output["meta"]
     assert bytes(meta["llm_output_text_utf8"].tolist()).decode("utf-8") == segment_text
     assert meta["audio_text_total_chars"].tolist() == [len(segment_text)]
-    assert meta["duplex_epoch"].tolist() == [8]
-    assert meta["duplex_turn_id"].tolist() == [2]
     assert meta["tts_is_last_chunk"].tolist() == [1]
 
 

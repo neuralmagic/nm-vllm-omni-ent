@@ -45,7 +45,7 @@ class TestOmniPayloadStruct:
         with pytest.raises(msgspec.ValidationError, match="unknown field"):
             to_struct({"meta": {"finisheed": True}})
 
-    def test_to_struct_rejects_minicpmo_duplex_runtime_handoff_fields(self):
+    def test_to_struct_rejects_legacy_runtime_handoff_fields(self):
         with pytest.raises(msgspec.ValidationError, match="unknown field"):
             to_struct({"hidden_states": {"tts": torch.zeros(1)}})
         with pytest.raises(msgspec.ValidationError, match="unknown field"):

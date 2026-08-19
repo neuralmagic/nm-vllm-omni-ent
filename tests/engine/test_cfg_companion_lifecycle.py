@@ -97,7 +97,6 @@ def _make_orchestrator(num_stages: int = 2) -> Orchestrator:
     orch.stage_pools = [_FakePool("llm"), _FakePool("diffusion")][:num_stages]
     orch.output_async_queue = asyncio.Queue()
     orch.async_chunk = False
-    orch.duplex_control_plane = None
     orch._pd_kv_params = {}
     orch._pd_pair = None
     orch._running_counter = None

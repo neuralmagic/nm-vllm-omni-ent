@@ -131,18 +131,6 @@ class TestStageConfig:
         assert "max_num_seqs" not in omega_config.engine_args
         # Legacy field name for backward compatibility
         assert omega_config.engine_input_source == []
-        assert omega_config.session_mode == "turn"
-
-    def test_to_omegaconf_duplex_session_mode(self):
-        """Test that session mode is preserved as stage metadata."""
-        config = StageConfig(
-            stage_id=0,
-            model_stage="thinker",
-            session_mode="duplex",
-        )
-        omega_config = config.to_omegaconf()
-
-        assert omega_config.session_mode == "duplex"
 
     def test_to_omegaconf_with_runtime_overrides(self):
         """Test that runtime overrides are applied to OmegaConf output."""
@@ -1144,28 +1132,6 @@ class TestResolveScheduler:
 
 
 class TestDeployConfigLoading:
-    def test_load_minicpmo_duplex_deploy_config(self):
-        deploy_path = Path(get_deploy_config_path("minicpmo_4_5_duplex.yaml"))
-
-        deploy = load_deploy_config(deploy_path)
-        pipeline = resolve_pipeline_config("minicpmo_4_5")
-        assert isinstance(pipeline, PipelineConfig)
-
-        stages = merge_pipeline_deploy(pipeline, deploy)
-
-        assert deploy.session_mode == "duplex"
-        assert deploy.async_chunk is True
-        assert deploy.active_stream_window == 1
-        assert [stage.session_mode for stage in stages] == ["duplex", "duplex", "duplex"]
-        assert [stage.to_omegaconf().session_mode for stage in stages] == ["duplex", "duplex", "duplex"]
-        assert [stage.yaml_engine_args["async_scheduling"] for stage in stages] == [False, False, False]
-        assert all("Async" not in (stage.scheduler_cls or "") for stage in stages)
-        assert [stage.devices for stage in deploy.stages] == ["0", "0", "0"]
-        assert deploy.stages[1].enforce_eager is False
-        assert stages[1].yaml_extras["default_sampling_params"]["max_tokens"] == 2048
-        assert stages[1].yaml_extras["default_sampling_params"]["min_tokens"] == 0
-        assert stages[1].yaml_extras["default_sampling_params"]["stop_token_ids"] == [1]
-
     @pytest.mark.parametrize(
         ("filename", "stage0_devices", "stage1_devices", "stage2_devices", "stage1_replicas"),
         [
@@ -1190,7 +1156,6 @@ class TestDeployConfigLoading:
 
         stages = merge_pipeline_deploy(pipeline, deploy)
 
-        assert deploy.session_mode == "duplex"
         assert [stage.yaml_runtime["devices"] for stage in stages] == [
             stage0_devices,
             stage1_devices,

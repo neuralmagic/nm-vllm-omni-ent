@@ -343,24 +343,9 @@ class GPUARModelRunner(OmniGPUModelRunner, OmniConnectorModelRunnerMixin):
                 kv_transfer_manager=self.kv_transfer_manager,
             )
         self._downstream_payload_cache: dict[str, bool] = {}
-        self._duplex_sampling_hook = None
-        self._duplex_sampling_hook_resolved = False
 
     def load_model(self, *args, **kwargs) -> None:
         super().load_model(*args, **kwargs)
-        self._resolve_duplex_sampling_hook(force=True)
-
-    def _resolve_duplex_sampling_hook(self, *, force: bool = False):
-        if not force and getattr(self, "_duplex_sampling_hook_resolved", False):
-            return self._duplex_sampling_hook
-        candidate = getattr(getattr(self, "model", None), "prepare_duplex_sampling", None)
-        self._duplex_sampling_hook = candidate if callable(candidate) else None
-        self._duplex_sampling_hook_resolved = True
-        if self._duplex_sampling_hook is not None and not hasattr(self, "_duplex_sampling_helper"):
-            from vllm_omni.experimental.fullduplex.model_executor import DuplexSamplingHelper
-
-            self._duplex_sampling_helper = DuplexSamplingHelper()
-        return self._duplex_sampling_hook
 
     def _make_buffer(self, *size, dtype, numpy=True):
         # Prevent ray from pinning the buffer due to large size
@@ -430,11 +415,6 @@ class GPUARModelRunner(OmniGPUModelRunner, OmniConnectorModelRunnerMixin):
 
     def _update_states(self, scheduler_output: SchedulerOutput) -> Callable | None:
         deferred_state_corrections_fn = super()._update_states(scheduler_output)
-        if self._resolve_duplex_sampling_hook() is None:
-            return deferred_state_corrections_fn
-        helper = getattr(self, "_duplex_sampling_helper", None)
-        if helper is not None:
-            helper.update_states(self, scheduler_output)
         return deferred_state_corrections_fn
 
     def _request_final_stage_id(self, req_id: str) -> int | None:
@@ -562,10 +542,6 @@ class GPUARModelRunner(OmniGPUModelRunner, OmniConnectorModelRunnerMixin):
             self._downstream_payload_cache.clear()
         if hasattr(self, "model_intermediate_buffer"):
             self.model_intermediate_buffer.clear()
-        duplex_helper = getattr(self, "_duplex_sampling_helper", None)
-        if duplex_helper is not None:
-            duplex_helper.clear()
-
         # 5. Release all CUDA graphs unconditionally (upstream only does this
         #    on ROCm; on CUDA the graphs are only freed by Python GC during
         #    interpreter shutdown, which is too late to prevent memory spikes).
@@ -1477,14 +1453,6 @@ class GPUARModelRunner(OmniGPUModelRunner, OmniConnectorModelRunnerMixin):
                         self.input_batch.positions[self.input_batch.logits_indices],
                     )
                 prepared_sampling_metadata = self._sampling_metadata_for_model_sampler(sampling_metadata)
-                prepare_duplex_sampling = self._resolve_duplex_sampling_hook()
-                if prepare_duplex_sampling is not None:
-                    helper = getattr(self, "_duplex_sampling_helper", None)
-                    rows = helper.rows(self) if helper is not None and helper.active_request_ids else ()
-                    if rows or (helper is not None and helper.hook_active):
-                        prepare_duplex_sampling(logits, prepared_sampling_metadata, rows)
-                    if helper is not None:
-                        helper.hook_active = bool(rows)
                 sampler_output = model_sample(logits, prepared_sampling_metadata)
                 if sampler_output is not None:
                     return sampler_output

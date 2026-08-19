@@ -13,7 +13,6 @@ from pytest_mock import MockerFixture
 from vllm.v1.engine.utils import EngineZmqAddresses
 
 from vllm_omni.config.config_factory import StageConfigFactory
-from vllm_omni.config.stage_config import DuplexSessionRuntimeConfig
 from vllm_omni.engine.async_omni_engine import AsyncOmniEngine
 from vllm_omni.engine.stage_engine_core_client import StageEngineCoreClientBase
 from vllm_omni.engine.stage_engine_startup import (
@@ -427,30 +426,6 @@ class TestSingleStageModeDetection:
         engine = self._make_engine_no_thread(mocker)
         assert engine.single_stage_mode is False
         assert engine._single_stage_id_filter is None
-
-    def test_stage_configs_path_loads_duplex_runtime_config(self, mocker: MockerFixture):
-        duplex_session = DuplexSessionRuntimeConfig(max_sessions=2)
-        get_pipeline_config = mocker.patch(
-            "vllm_omni.engine.async_omni_engine.StageConfigFactory.get_pipeline_config",
-            return_value=None,
-        )
-        load_deploy_config = mocker.patch(
-            "vllm_omni.engine.async_omni_engine.load_deploy_config",
-            return_value=SimpleNamespace(duplex_session=duplex_session),
-        )
-
-        engine = self._make_engine_no_thread(
-            mocker,
-            stage_configs_path="/fake/duplex.yaml",
-        )
-
-        get_pipeline_config.assert_called_once_with(
-            model="fake-model",
-            trust_remote_code=False,
-            deploy_config_path="/fake/duplex.yaml",
-        )
-        load_deploy_config.assert_called_once_with("/fake/duplex.yaml")
-        assert engine.duplex_session_config is duplex_session
 
     def test_single_stage_mode_without_stage_id_has_no_filter(self, mocker: MockerFixture):
         engine = self._make_engine_no_thread(

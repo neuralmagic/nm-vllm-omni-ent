@@ -1680,9 +1680,8 @@ class OpenAIClientHandler:
         ``request_config`` keys:
 
         - ``send_frames``: optional ``str`` or sequence of ``str`` raw WebSocket text frames (omit when the server
-          speaks first, e.g. ``/v1/realtime`` rejection path).
-        - ``ws_skip_types``: optional event ``type`` strings to ignore while waiting for the first matching frame
-          (e.g. ``["session.created"]`` on ``/v1/realtime``).
+          speaks first).
+        - ``ws_skip_types``: optional event ``type`` strings to ignore while waiting for the first matching frame.
         - ``timeout``: seconds to wait for the first inbound text frame (default ``120``).
         - ``ws_max_size``: passed through as ``max_size`` to :func:`websockets.connect` when the key is present.
         """
@@ -1759,23 +1758,6 @@ class OpenAIClientHandler:
             ws_error_code=ws_error_code,
         )
         return self._send_websocket_first_json_request("/v1/video/chat/stream", cfg)
-
-    def send_realtime_ws_request(
-        self,
-        request_config: dict[str, Any] | None = None,
-        *,
-        err_message: str | tuple[str, ...] | list[str] | None = None,
-        ws_json_type: str | None = None,
-        ws_error_code: str | None = None,
-    ) -> list[WebSocketJsonResponse]:
-        """WebSocket ``/v1/realtime`` — optional outbound frames, then first JSON text frame (often server-initiated)."""
-        cfg = _merge_ws_expectation_kwargs(
-            request_config,
-            err_message=err_message,
-            ws_json_type=ws_json_type,
-            ws_error_code=ws_error_code,
-        )
-        return self._send_websocket_first_json_request("/v1/realtime", cfg)
 
     def send_robot_openpi_ws_request(
         self,

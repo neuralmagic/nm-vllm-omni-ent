@@ -25,7 +25,6 @@ from vllm.model_executor.models.llama import LlamaModel
 from vllm.model_executor.models.utils import maybe_prefix
 from vllm.v1.sample.sampler import Sampler
 
-from vllm_omni.experimental.fullduplex.engine.intermediate import get_tts_handoff
 from vllm_omni.model_executor.models.output_templates import OmniOutput
 from vllm_omni.platforms import current_omni_platform
 
@@ -43,7 +42,6 @@ _CODEC_TOP_K = 25
 _CODEC_TOP_P = 0.85
 _CODEC_REPETITION_PENALTY = 1.05
 _CODEC_MIN_TOKENS = 50
-_DUPLEX_CODEC_TOKENS_PER_CHUNK = 26
 
 
 def _max_audio_tokens(condition_tokens: int) -> int:
@@ -214,8 +212,6 @@ class MiniCPMO45OmniTTSForConditionalGeneration(nn.Module, SupportsPP):
         self,
         tts_token_ids: torch.Tensor,
         tts_hidden_states: torch.Tensor,
-        *,
-        native_duplex: bool = False,
     ) -> torch.Tensor:
         if tts_token_ids.numel() == 0 or tts_hidden_states.numel() == 0:
             # The thinker can legally emit an empty speech segment (<|tts_bos|>
@@ -237,11 +233,7 @@ class MiniCPMO45OmniTTSForConditionalGeneration(nn.Module, SupportsPP):
         hidden_embeds = self.projector_semantic(hidden)
         if self._normalize:
             hidden_embeds = F.normalize(hidden_embeds, p=2, dim=-1)
-        audio_bos = self.emb_text(torch.tensor([self._tts_bos_id], device=device, dtype=torch.long))
         condition = text_embeds + hidden_embeds
-        if native_duplex:
-            # Match MiniCPMTTS.generate_chunk's streaming condition.
-            return torch.cat([condition, audio_bos], dim=0)
         return torch.cat([condition, self._boundary_embeddings()], dim=0)
 
     def preprocess(
@@ -258,7 +250,10 @@ class MiniCPMO45OmniTTSForConditionalGeneration(nn.Module, SupportsPP):
         first_call = not isinstance(state, dict)
 
         if is_prefill or first_call:
-            token_ids, hidden_states = get_tts_handoff(info_dict)
+            ids_info = info_dict.get("ids")
+            token_ids = ids_info.get("tts") if isinstance(ids_info, dict) else None
+            hidden_info = info_dict.get("hidden")
+            hidden_states = hidden_info.get("tts") if isinstance(hidden_info, dict) else None
             # Cross-process stage transport serializes CPU tensors as lists.
             # Normalize both local tensor handoffs and transported payloads
             # before validating/building the Talker condition.
@@ -284,15 +279,12 @@ class MiniCPMO45OmniTTSForConditionalGeneration(nn.Module, SupportsPP):
                     "MiniCPM-o Talker received an empty condition (request %s); this request produces no audio.",
                     info_dict.get("request_id"),
                 )
-            native_duplex = bool(info_dict.get("native_duplex", False))
             full_embeds = self._build_condition_embeddings(
                 token_ids,
                 hidden_states,
-                native_duplex=native_duplex,
             )
             offset = int(info_dict.get("_omni_num_computed_tokens", 0))
             request_id = str(info_dict.get("request_id", "0"))
-            meta = info_dict.get("meta")
             # The handoff rebuilds only the tail-aligned Talker condition.
             # Materialize zero-token embeddings for any scheduler prompt
             # prefix so chunked prefill can slice from a non-zero offset.
@@ -315,15 +307,8 @@ class MiniCPMO45OmniTTSForConditionalGeneration(nn.Module, SupportsPP):
                     f"tts_ids={token_ids.shape[0]} tts_hidden={hidden_states.shape[0]} "
                     f"prompt_len={info_dict.get('_omni_prompt_len')}"
                 )
-            duplex_boundary = isinstance(meta, dict) and (
-                bool(meta.get("turn_start", False)) or bool(meta.get("turn_end", False))
-            )
-            if native_duplex:
-                max_tokens = _DUPLEX_CODEC_TOKENS_PER_CHUNK
-                min_tokens = 0 if duplex_boundary else _DUPLEX_CODEC_TOKENS_PER_CHUNK
-            else:
-                max_tokens = _max_audio_tokens(int(token_ids.numel()))
-                min_tokens = self._codec_min_tokens
+            max_tokens = _max_audio_tokens(int(token_ids.numel()))
+            min_tokens = self._codec_min_tokens
             state = {
                 "step": 0,
                 "max_tokens": max_tokens,
@@ -424,61 +409,11 @@ class MiniCPMO45OmniTTSForConditionalGeneration(nn.Module, SupportsPP):
             raise RuntimeError(
                 f"MiniCPM-o continuous Talker received {len(sample_eligible)} sampling flags for {len(infos)} requests"
             )
-        emit_duplex_metadata = any(isinstance(info, dict) and info.get("native_duplex") is True for info in infos)
-
         stop_rows: list[torch.Tensor] = []
         codec_deltas: list[torch.Tensor] = []
         terminal_flags: list[torch.Tensor] = []
-        native_duplex_flags: list[torch.Tensor] = []
-        duplex_epochs: list[torch.Tensor] = []
-        duplex_turn_ids: list[torch.Tensor] = []
-        segment_texts_utf8: list[torch.Tensor] = []
-        turn_end_flags: list[torch.Tensor] = []
         empty_delta = hidden.new_empty((0, 1), dtype=torch.long)
         for index, info in enumerate(infos):
-            info_dict = info if isinstance(info, dict) else {}
-            native_duplex = info_dict.get("native_duplex") is True
-            if emit_duplex_metadata:
-                duplex_info = info_dict.get("duplex")
-                if not isinstance(duplex_info, dict):
-                    duplex_info = {}
-                epoch = duplex_info.get("epoch", -1)
-                turn_id = duplex_info.get("turn_id", -1)
-                if native_duplex and not all(
-                    isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in (epoch, turn_id)
-                ):
-                    raise RuntimeError(
-                        "MiniCPM-o native duplex Talker requires non-negative integer "
-                        f"epoch and turn_id, got epoch={epoch!r}, turn_id={turn_id!r}"
-                    )
-                meta_info = info_dict.get("meta")
-                if not isinstance(meta_info, dict):
-                    meta_info = {}
-                segment_text = meta_info.get("native_duplex_segment_text", "") if native_duplex else ""
-                if not isinstance(segment_text, str):
-                    segment_text = ""
-                turn_eos_id = meta_info.get("turn_eos_token_id")
-                ids_info = info_dict.get("ids")
-                tts_ids = ids_info.get("tts") if native_duplex and isinstance(ids_info, dict) else None
-                if isinstance(tts_ids, torch.Tensor):
-                    contains_turn_eos = isinstance(turn_eos_id, int) and bool(
-                        torch.any(tts_ids.reshape(-1) == turn_eos_id).item()
-                    )
-                elif isinstance(tts_ids, (list, tuple)):
-                    contains_turn_eos = isinstance(turn_eos_id, int) and turn_eos_id in tts_ids
-                else:
-                    contains_turn_eos = False
-                native_duplex_flags.append(torch.tensor(native_duplex, dtype=torch.bool))
-                duplex_epochs.append(torch.tensor(epoch if isinstance(epoch, int) else -1, dtype=torch.long))
-                duplex_turn_ids.append(torch.tensor(turn_id if isinstance(turn_id, int) else -1, dtype=torch.long))
-                segment_texts_utf8.append(
-                    torch.tensor(
-                        list(segment_text.encode("utf-8")),
-                        dtype=torch.uint8,
-                    )
-                )
-                turn_end_flags.append(torch.tensor(native_duplex and contains_turn_eos, dtype=torch.bool))
-
             if not isinstance(info, dict):
                 stop_rows.append(hidden.new_tensor([0.0, float("-inf")]))
                 codec_deltas.append(empty_delta)
@@ -549,16 +484,6 @@ class MiniCPMO45OmniTTSForConditionalGeneration(nn.Module, SupportsPP):
         # Lists are deliberate: the runner routes element i to request i,
         # preserving compaction alignment while emitting only this step's code.
         meta_outputs = {"finished": terminal_flags}
-        if emit_duplex_metadata:
-            meta_outputs.update(
-                {
-                    "native_duplex": native_duplex_flags,
-                    "duplex_epoch": duplex_epochs,
-                    "duplex_turn_id": duplex_turn_ids,
-                    "llm_output_text_utf8": segment_texts_utf8,
-                    "turn_end": turn_end_flags,
-                }
-            )
         multimodal_outputs: dict[str, Any] = {
             "codes": {"audio": codec_deltas},
             "meta": meta_outputs,

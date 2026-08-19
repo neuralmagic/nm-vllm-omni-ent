@@ -95,7 +95,7 @@ def test_keyword_omni_params_round_trip():
 
 
 def test_model_intermediate_buffer_round_trips_to_streaming_update():
-    buffer = {"duplex": {"turn_id": 3}}
+    buffer = {"session": {"turn_id": 3}}
     request = OmniRequest(
         request_id="req-model-buffer",
         prompt_token_ids=[1, 2],

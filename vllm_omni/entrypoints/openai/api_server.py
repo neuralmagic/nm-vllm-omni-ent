@@ -77,7 +77,6 @@ from vllm.entrypoints.serve.utils.error_response import create_error_response
 from vllm.entrypoints.serve.utils.orca_metrics import metrics_header
 from vllm.entrypoints.serve.utils.request_logger import RequestLogger
 from vllm.entrypoints.serve.utils.server_utils import get_uvicorn_log_config
-from vllm.entrypoints.speech_to_text.realtime.serving import OpenAIServingRealtime
 from vllm.entrypoints.speech_to_text.transcription.serving import (
     OpenAIServingTranscription,
 )
@@ -95,7 +94,6 @@ from vllm.v1.engine.exceptions import EngineDeadError, EngineGenerateError
 from vllm_omni.config.endpoint_policy import shutdown_unsupported_routes
 from vllm_omni.diffusion.models.interface import ReferenceVideoDecodeSpec
 from vllm_omni.entrypoints.async_omni import AsyncOmni
-from vllm_omni.entrypoints.openai.duplex_capability import should_enable_duplex_endpoint
 from vllm_omni.entrypoints.openai.errors import InvalidInputReferenceError
 from vllm_omni.entrypoints.openai.image_api_utils import (
     SUPPORTED_LAYERED_RESOLUTIONS,
@@ -124,7 +122,9 @@ from vllm_omni.entrypoints.openai.protocol.videos import (
     VideoListResponse,
     VideoResponse,
 )
-from vllm_omni.entrypoints.openai.realtime_connection import RealtimeConnection
+from vllm_omni.entrypoints.openai.realtime.connection import (
+    FullDuplexRealtimeConnection,
+)
 from vllm_omni.entrypoints.openai.serving_audio_generate import OmniOpenAIServingAudioGenerate
 from vllm_omni.entrypoints.openai.serving_chat import OmniOpenAIServingChat
 from vllm_omni.entrypoints.openai.serving_speech import OmniOpenAIServingSpeech
@@ -794,7 +794,6 @@ async def omni_init_app_state(
             model_name=model_name,
             stage_configs=diffusion_stage_configs,
         )
-        state.openai_serving_duplex = None
         state.openai_streaming_speech = None
         state.openai_streaming_video = None
         state.openai_serving_realtime_robot = ServingRealtimeRobotOpenPI.create_policy_server(
@@ -1114,24 +1113,6 @@ async def omni_init_app_state(
         if state.openai_serving_chat is not None
         else None
     )
-    state.openai_serving_duplex = None
-    if state.openai_serving_chat is not None and should_enable_duplex_endpoint(
-        state.stage_configs,
-        config_path=getattr(args, "stage_configs_path", None) or getattr(args, "deploy_config", None),
-    ):
-        from vllm_omni.experimental.fullduplex.openai.serving import OmniDuplexSessionHandler
-
-        state.openai_serving_duplex = OmniDuplexSessionHandler(
-            chat_service=state.openai_serving_chat,
-            duplex_session_config=getattr(engine_client, "duplex_session_config", None),
-            serving_runtime_adapter_path=getattr(engine_client, "duplex_serving_adapter_path", None),
-        )
-    state.openai_serving_realtime = OpenAIServingRealtime(
-        engine_client=engine_client,
-        models=state.openai_serving_models,
-        request_logger=request_logger,
-    )
-
     state.openai_serving_video = OmniOpenAIServingVideo(
         engine_client,
         model_name=served_model_names[0] if served_model_names else None,
@@ -1639,23 +1620,23 @@ async def streaming_video_output(websocket: WebSocket):
 
 @router.websocket("/v1/realtime")
 async def realtime_websocket(websocket: WebSocket):
-    """WebSocket endpoint for OpenAI-style realtime interactions."""
-    duplex_handler = getattr(websocket.app.state, "openai_serving_duplex", None)
-    duplex_query = websocket.query_params.get("duplex")
-    use_duplex_realtime = (
-        duplex_handler is not None and isinstance(duplex_query, str) and duplex_query.lower() in {"1", "true", "on"}
+    """WebSocket endpoint for full-duplex voice agent sessions following the
+    OpenAI Realtime API protocol.
+    """
+    state = websocket.app.state
+    engine_client = state.engine_client
+    served = getattr(state.args, "served_model_name", None)
+    model_name = served[0] if served else state.args.model
+    pipeline_cfg = getattr(getattr(engine_client, "engine", None), "pipeline_config", None)
+    native_vad = getattr(pipeline_cfg, "supports_semantic_vad", False)
+    connection = FullDuplexRealtimeConnection(
+        websocket=websocket,
+        engine=engine_client,
+        model_name=model_name,
+        supports_native_vad=native_vad,
+        tool_call_parser=state.args.tool_call_parser,
+        enable_auto_tool_choice=state.args.enable_auto_tool_choice,
     )
-    if use_duplex_realtime and duplex_handler is not None:
-        await duplex_handler.handle_realtime_session(websocket)
-        return
-
-    serving = getattr(websocket.app.state, "openai_serving_realtime", None)
-    if serving is None:
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "error": "Realtime API is not available", "code": "unsupported"})
-        await websocket.close()
-        return
-    connection = RealtimeConnection(websocket, serving)
     await connection.handle_connection()
 
 
@@ -1674,18 +1655,6 @@ async def realtime_robot_openpi(websocket: WebSocket):
         return
     connection = RobotRealtimeConnection(websocket, serving)
     await connection.handle_connection()
-
-
-@router.websocket("/v1/duplex")
-async def duplex_websocket(websocket: WebSocket):
-    """WebSocket endpoint for vLLM-Omni duplex session control."""
-    handler = getattr(websocket.app.state, "openai_serving_duplex", None)
-    if handler is None:
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "error": "Duplex API is not available", "code": "unsupported"})
-        await websocket.close()
-        return
-    await handler.handle_session(websocket)
 
 
 # Health and Model endpoints for diffusion mode

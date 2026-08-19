@@ -95,15 +95,19 @@ def _wav_bytes_from_pcm16(pcm: bytes, sample_rate_hz: int) -> bytes:
 async def _run_realtime_audio_roundtrip(
     host: str,
     port: int,
-    model: str,
     pcm16: bytes,
     *,
     chunk_ms: int = 100,
     send_delay_ms: int = 0,
 ) -> dict:
+    """Drive one turn of the OpenAI /v1/realtime protocol as connection.py
+    actually implements it: append audio, commit (manual turn detection --
+    semantic_vad is opt-in and server_vad isn't supported), explicitly
+    request a response, then consume its streamed events through
+    response.done."""
     uri = f"ws://{host}:{port}/v1/realtime"
     incremental: list[bytes] = []
-    output_sr = 24000
+    output_sr = 24000  # fixed by the server (SAMPLE_RATE_HZ); not carried on the wire
     text_chunks: list[str] = []
     final_text = ""
     delta_events = 0
@@ -112,9 +116,6 @@ async def _run_realtime_audio_roundtrip(
     chunk_bytes = max(bytes_per_ms * chunk_ms, 2)
 
     async with websockets.connect(uri, max_size=64 * 1024 * 1024) as ws:
-        await ws.send(json.dumps({"type": "session.update", "model": model}))
-        await ws.send(json.dumps({"type": "input_audio_buffer.commit", "final": False}))
-
         for i in range(0, len(pcm16), chunk_bytes):
             chunk = pcm16[i : i + chunk_bytes]
             await ws.send(
@@ -128,7 +129,8 @@ async def _run_realtime_audio_roundtrip(
             if send_delay_ms > 0:
                 await asyncio.sleep(send_delay_ms / 1000.0)
 
-        await ws.send(json.dumps({"type": "input_audio_buffer.commit", "final": True}))
+        await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
+        await ws.send(json.dumps({"type": "response.create"}))
 
         while True:
             message = await asyncio.wait_for(ws.recv(), timeout=600)
@@ -138,30 +140,41 @@ async def _run_realtime_audio_roundtrip(
             event = json.loads(message)
             event_type = event.get("type")
 
-            if event_type == "session.created":
+            if event_type in (
+                "session.created",
+                "conversation.created",
+                "input_audio_buffer.committed",
+                "response.created",
+                "response.output_item.added",
+                "response.content_part.added",
+            ):
                 continue
 
-            if event_type == "response.audio.delta":
+            if event_type == "response.output_audio.delta":
                 delta_events += 1
-                sr = event.get("sample_rate_hz")
-                if isinstance(sr, int) and sr > 0:
-                    output_sr = sr
-                audio_b64 = event.get("audio", "")
+                audio_b64 = event.get("delta", "")
                 if audio_b64:
                     incremental.append(base64.b64decode(audio_b64))
                 continue
 
-            if event_type == "transcription.delta":
+            if event_type == "response.output_audio_transcript.delta":
                 d = event.get("delta", "")
                 if d:
                     text_chunks.append(d)
                 continue
 
-            if event_type == "transcription.done":
-                final_text = event.get("text", "") or "".join(text_chunks)
+            if event_type == "response.output_audio_transcript.done":
+                final_text = event.get("transcript", "") or "".join(text_chunks)
                 continue
 
-            if event_type == "response.audio.done":
+            if event_type in (
+                "response.output_audio.done",
+                "response.content_part.done",
+                "response.output_item.done",
+            ):
+                continue
+
+            if event_type == "response.done":
                 break
 
             if event_type == "error":
@@ -250,7 +263,6 @@ class TestQwen3OmniRealtimeWebSocket:
             _run_realtime_audio_roundtrip(
                 omni_server.host,
                 omni_server.port,
-                omni_server.model,
                 pcm16,
                 chunk_ms=100,
                 send_delay_ms=SEND_DELAY_MS,
@@ -272,7 +284,6 @@ class TestQwen3OmniRealtimeWebSocket:
             _run_realtime_audio_roundtrip(
                 omni_server.host,
                 omni_server.port,
-                omni_server.model,
                 pcm16,
                 chunk_ms=100,
                 send_delay_ms=0,
