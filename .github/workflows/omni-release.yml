@@ -5,7 +5,6 @@
 #   - cicd_ref=feature/vllm-omni-tp  (switch to main after nm-cicd omni PR merges)
 #   - wf_category=RELEASE
 #   - run_ocp_validation=true
-#   - publish=true (promote image to quay.io/vllm/vllm-omni-cuda:{tag})
 #   - python=3.12
 #
 # This workflow dispatches once and exits — the full build+test cycle runs in
@@ -67,8 +66,6 @@ env:
   VLLM_RUN_ID: ${{ inputs.vllm_run_id || '' }}
   WF_CATEGORY: ${{ github.event_name == 'push' && 'RELEASE' || inputs.wf_category || 'DEBUG' }}
   RUN_OCP: ${{ github.event_name == 'push' && 'true' || inputs.run_ocp_validation }}
-  PUBLISH: ${{ github.event_name == 'push' && 'true' || 'false' }}
-  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
   SOURCE_SHA: ${{ github.sha }}
   MODEL_VAL_REF: ${{ inputs.model_validation_configs_ref || 'main' }}
   TESTING_OPTIONS: ${{ inputs.testing_options_flags || '' }}
@@ -114,10 +111,6 @@ jobs:
             ARGS+=(-f "vllm_run_id=$VLLM_RUN_ID")
           fi
 
-          if [[ "$PUBLISH" == "true" && -n "$RELEASE_TAG" ]]; then
-            ARGS+=(-f "publish=true" -f "release_tag=$RELEASE_TAG")
-          fi
-
           gh "${ARGS[@]}"
 
           PIPELINE_URL="https://github.com/neuralmagic/nm-cicd/actions/workflows/omni-pipeline.yml"
@@ -135,8 +128,6 @@ jobs:
             echo "| python | \`$PYTHON\` |"
             echo "| wf_category | \`$WF_CATEGORY\` |"
             echo "| run_ocp_validation | \`$RUN_OCP\` |"
-            echo "| publish | \`$PUBLISH\` |"
-            echo "| release_tag | \`${RELEASE_TAG:-n/a}\` |"
             echo "| vllm_run_id | \`${VLLM_RUN_ID:-auto from midstream/vllm-wheels.yml}\` |"
             echo "| model_validation_configs_ref | \`$MODEL_VAL_REF\` |"
             echo "| testing_options_flags | \`$TESTING_OPTIONS\` |"

@@ -18,7 +18,7 @@ Use the **Omni release** workflow from the [Actions tab](../../actions/workflows
 
 | Trigger | What happens |
 |---------|--------------|
-| Push tag `omni-*` | Full pipeline in nm-cicd: accept-sync + OCP validation + publish (`wf_category=RELEASE`) |
+| Push tag `omni-*` | Full pipeline in nm-cicd: accept-sync + OCP validation (`wf_category=RELEASE`) |
 | Manual **Omni release** | Dispatch to nm-cicd `omni-pipeline.yml` — choose ref, category, and whether to run OCP validation |
 | PR label `build-omni` | [Omni PR build](../../actions/workflows/omni-pr.yml) — accept-sync only, commit status on PR |
 | Tag `omni-*` (parallel) | [Omni release notes](../../actions/workflows/omni-release-notes.yml) — draft GitHub Release changelog |

@@ -3,7 +3,7 @@
 # Runs alongside omni-release.yml on tag push. Collects commits since the
 # previous omni-* tag and writes a draft GitHub Release with the changelog.
 #
-# Does not publish wheels/images — that is handled by omni-pipeline PUBLISH (nm-cicd).
+# Does not publish wheels/images — image publish to release registry is deferred.
 
 name: omni release notes
 run-name: Release notes ${{ github.ref_name }} — ${{ github.actor }}
