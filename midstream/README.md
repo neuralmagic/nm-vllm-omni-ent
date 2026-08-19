@@ -18,8 +18,10 @@ Use the **Omni release** workflow from the [Actions tab](../../actions/workflows
 
 | Trigger | What happens |
 |---------|--------------|
-| Push tag `omni-*` | Full pipeline in nm-cicd: accept-sync + OCP validation (`wf_category=RELEASE`) |
+| Push tag `omni-*` | Full pipeline in nm-cicd: accept-sync + OCP validation + publish (`wf_category=RELEASE`) |
 | Manual **Omni release** | Dispatch to nm-cicd `omni-pipeline.yml` — choose ref, category, and whether to run OCP validation |
+| PR label `build-omni` | [Omni PR build](../../actions/workflows/omni-pr.yml) — accept-sync only, commit status on PR |
+| Tag `omni-*` (parallel) | [Omni release notes](../../actions/workflows/omni-release-notes.yml) — draft GitHub Release changelog |
 
 The Ent workflow dispatches once (GitHub App token). The full build+test cycle runs as a **single nm-cicd workflow run** — no cross-repo polling.
 
@@ -46,9 +48,7 @@ The tag name is freeform — use whatever makes sense: `omni-v0.20.0`, `omni-dou
 
 ## Secret: CICD_APP_ID / CICD_APP_PRIVATE_KEY
 
-The **Omni release** workflow uses the org GitHub App (`CICD_APP_ID`, `CICD_APP_PRIVATE_KEY`) to dispatch nm-cicd workflows — the same pattern as `nm-vllm-ent` release.
-
-**Legacy:** `midstream-build.yml` used `CICD_OMNI_PAT`; that path is deprecated and will be removed in a later phase.
+The **Omni release** workflow uses the org GitHub App (`CICD_APP_ID`, `CICD_APP_PRIVATE_KEY`) to dispatch nm-cicd workflows — the same pattern as `nm-vllm-ent` release. Legacy `midstream-build.yml` also uses the GitHub App token (not `CICD_OMNI_PAT`).
 
 ## vLLM Version Mapping
 
@@ -133,6 +133,6 @@ gh workflow run build-image.yml --repo neuralmagic/nm-cicd \
 Workflows in `.github/workflows/` are a mix of upstream and midstream:
 
 - **Upstream workflows** (e.g. `build_wheel.yml`, `pre-commit.yml`) — carried forward from `vllm-project/vllm-omni`
-- **Midstream workflows** — `omni-release.yml` (trigger), `midstream-build.yml` (deprecated)
+- **Midstream workflows** — `omni-release.yml` (trigger), `omni-pr.yml` (PR label), `omni-release-notes.yml` (changelog), `midstream-build.yml` (deprecated)
 
 See [.github-upstream-policy.md](.github-upstream-policy.md) for rebase guidelines.

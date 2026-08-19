@@ -1,0 +1,73 @@
+# Phase 4: PR validation trigger for vLLM-Omni.
+#
+# Add the `build-omni` label to a pull request to dispatch nm-cicd omni-pipeline
+# (accept-sync only — no OCP validation). nm-cicd reports commit status back to
+# the PR when the pipeline completes.
+#
+# Does not replace or modify midstream-build.yml (deprecated; removal deferred).
+
+name: omni pr build
+run-name: Omni PR #${{ github.event.pull_request.number }} — ${{ github.actor }}
+
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+concurrency:
+  group: omni-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  trigger-omni-pipeline:
+    if: contains(github.event.pull_request.labels.*.name, 'build-omni')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CICD_APP_ID }}
+          private-key: ${{ secrets.CICD_APP_PRIVATE_KEY }}
+          owner: neuralmagic
+
+      - name: Trigger nm-cicd omni-pipeline workflow
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_REF: ${{ github.event.pull_request.head.ref }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          CICD_REF: feature/vllm-omni-tp
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh workflow run omni-pipeline.yml \
+            --repo neuralmagic/nm-cicd \
+            --ref "$CICD_REF" \
+            -f "repo=${{ github.repository }}" \
+            -f "ref=$PR_REF" \
+            -f "python=3.12" \
+            -f "target_device=cuda" \
+            -f "wf_category=DEBUG" \
+            -f "run_ocp_validation=false" \
+            -f "model_validation_configs_ref=main" \
+            -f "testing_options_flags=--tags-include tiny" \
+            -f "source_run_id=${{ github.run_id }}" \
+            -f "source_repo=${{ github.repository }}" \
+            -f "source_sha=$PR_SHA" \
+            -f "report_commit_status=true"
+
+          PIPELINE_URL="https://github.com/neuralmagic/nm-cicd/actions/workflows/omni-pipeline.yml"
+
+          {
+            echo "### Triggered nm-cicd omni pipeline (PR build)"
+            echo ""
+            echo "| Parameter | Value |"
+            echo "|-----------|-------|"
+            echo "| PR | #${{ github.event.pull_request.number }} |"
+            echo "| Head ref | \`$PR_REF\` |"
+            echo "| Head SHA | \`$PR_SHA\` |"
+            echo "| Pipeline runs | [View in nm-cicd](${PIPELINE_URL}) |"
+            echo "| OCP validation | \`false\` |"
+            echo "| Commit status | \`nm-cicd/omni-pipeline\` on PR head SHA |"
+          } >> "$GITHUB_STEP_SUMMARY"

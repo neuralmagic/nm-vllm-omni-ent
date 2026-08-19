@@ -3,6 +3,8 @@ name: "Midstream Build (deprecated)"
 # Deprecated: use omni-release.yml instead. This workflow polls nm-cicd via gh CLI
 # and holds an Ent runner for hours. omni-release.yml dispatches omni-pipeline.yml
 # once; the full DAG runs in nm-cicd.
+#
+# Auth: GitHub App token (CICD_APP_ID / CICD_APP_PRIVATE_KEY) — CICD_OMNI_PAT is no longer used.
 
 on:
   push:
@@ -232,9 +234,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CICD_APP_ID }}
+          private-key: ${{ secrets.CICD_APP_PRIVATE_KEY }}
+          owner: neuralmagic
+
       - name: Trigger vLLM wheel build
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -254,8 +264,7 @@ jobs:
 
       - name: Poll for triggered run
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
-        shell: bash
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}        shell: bash
         run: |
           set -euo pipefail
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
@@ -323,9 +332,17 @@ jobs:
       omni_run_id: ${{ steps.poll.outputs.omni_run_id }}
 
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CICD_APP_ID }}
+          private-key: ${{ secrets.CICD_APP_PRIVATE_KEY }}
+          owner: neuralmagic
+
       - name: Trigger omni wheel build
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -347,8 +364,7 @@ jobs:
       - name: Poll for triggered run
         id: poll
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
-        shell: bash
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}        shell: bash
         run: |
           set -euo pipefail
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
@@ -419,7 +435,7 @@ jobs:
       - name: Wait for omni wheel to complete
         if: needs.resolve.outputs.build_step == 'full-chain' && steps.poll.outputs.omni_run_id != ''
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -478,6 +494,14 @@ jobs:
       image_run_id: ${{ steps.poll.outputs.image_run_id }}
 
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CICD_APP_ID }}
+          private-key: ${{ secrets.CICD_APP_PRIVATE_KEY }}
+          owner: neuralmagic
+
       - name: Resolve omni run ID
         id: image-inputs
         shell: bash
@@ -498,7 +522,7 @@ jobs:
       - name: Trigger docker image build
         id: trigger
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -527,8 +551,7 @@ jobs:
       - name: Poll for triggered run
         id: poll
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
-        shell: bash
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}        shell: bash
         run: |
           set -euo pipefail
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
@@ -584,7 +607,7 @@ jobs:
       - name: Wait for image build to complete
         if: steps.poll.outputs.image_run_id != ''
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -711,11 +734,18 @@ jobs:
     name: "smoke-test (${{ matrix.label_suffix }})"
 
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CICD_APP_ID }}
+          private-key: ${{ secrets.CICD_APP_PRIVATE_KEY }}
+          owner: neuralmagic
+
       - name: Trigger smoke test
         id: trigger
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
-        shell: bash
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}        shell: bash
         run: |
           set -euo pipefail
 
@@ -749,8 +779,7 @@ jobs:
       - name: Poll for triggered run
         id: poll
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
-        shell: bash
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}        shell: bash
         run: |
           set -euo pipefail
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
@@ -790,7 +819,7 @@ jobs:
       - name: Wait for smoke test to complete
         if: steps.poll.outputs.smoke_run_id != ''
         env:
-          GH_TOKEN: ${{ secrets.CICD_OMNI_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
