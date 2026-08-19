@@ -65,7 +65,6 @@ on:
 permissions:
   contents: read
 
-
 jobs:
   # ---------------------------------------------------------------------------
   # Resolve — shared setup for all jobs
@@ -264,7 +263,8 @@ jobs:
 
       - name: Poll for triggered run
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}        shell: bash
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
         run: |
           set -euo pipefail
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
@@ -364,7 +364,8 @@ jobs:
       - name: Poll for triggered run
         id: poll
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}        shell: bash
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
         run: |
           set -euo pipefail
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
@@ -551,7 +552,8 @@ jobs:
       - name: Poll for triggered run
         id: poll
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}        shell: bash
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
         run: |
           set -euo pipefail
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
@@ -745,7 +747,8 @@ jobs:
       - name: Trigger smoke test
         id: trigger
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}        shell: bash
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -779,7 +782,8 @@ jobs:
       - name: Poll for triggered run
         id: poll
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}        shell: bash
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
         run: |
           set -euo pipefail
           NM_CICD_REF="${{ needs.resolve.outputs.nm_cicd_ref }}"
