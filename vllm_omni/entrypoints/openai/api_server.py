@@ -14,7 +14,7 @@ import random
 import tempfile
 import time
 from argparse import Namespace
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from numbers import Integral
@@ -156,6 +156,40 @@ router = APIRouter()
 
 MAX_UINT32_SEED = 2**32 - 1
 profiler_router = APIRouter()
+
+_QWEN3_OMNI_REALTIME_ARCH = "Qwen3OmniMoeForConditionalGeneration"
+_QWEN3_OMNI_REALTIME_STAGES = {"thinker", "talker", "code2wav"}
+
+
+def _supports_qwen3_omni_realtime(stage_configs: Any) -> bool:
+    def stage_arg(stage: Any, name: str) -> Any:
+        engine_args = getattr(stage, "engine_args", None)
+        return engine_args.get(name) if isinstance(engine_args, Mapping) else getattr(engine_args, name, None)
+
+    stages = stage_configs or ()
+    return (
+        len(stages) == len(_QWEN3_OMNI_REALTIME_STAGES)
+        and all(stage_arg(stage, "model_arch") == _QWEN3_OMNI_REALTIME_ARCH for stage in stages)
+        and {stage_arg(stage, "model_stage") for stage in stages} == _QWEN3_OMNI_REALTIME_STAGES
+    )
+
+
+async def _reject_realtime_websocket(websocket: WebSocket, message: str) -> None:
+    await websocket.accept()
+    await websocket.send_json(
+        {
+            "event_id": f"evt_{random_uuid()}",
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "code": "unsupported_model",
+                "message": message,
+                "param": "model",
+                "event_id": None,
+            },
+        }
+    )
+    await websocket.close(code=1008)
 
 
 def _load_model_chat_template_json(model: str) -> str | None:
@@ -1621,10 +1655,20 @@ async def streaming_video_output(websocket: WebSocket):
 async def realtime_websocket(websocket: WebSocket):
     """Handle an OpenAI-compatible Realtime API session."""
     state = websocket.app.state
+    if not _supports_qwen3_omni_realtime(getattr(state, "stage_configs", None)):
+        await _reject_realtime_websocket(websocket, "The Realtime API is only supported for Qwen3-Omni")
+        return
+
+    model_name = state.openai_serving_models.base_model_paths[0].name
+    requested_model = websocket.query_params.get("model")
+    if requested_model is not None and requested_model != model_name:
+        await _reject_realtime_websocket(websocket, f"Model '{requested_model}' is not available")
+        return
+
     connection = FullDuplexRealtimeConnection(
         websocket=websocket,
         engine=state.engine_client,
-        model_name=state.openai_serving_models.base_model_paths[0].name,
+        model_name=model_name,
         tool_call_parser=getattr(state.args, "tool_call_parser", None),
         enable_auto_tool_choice=getattr(state.args, "enable_auto_tool_choice", False),
     )
