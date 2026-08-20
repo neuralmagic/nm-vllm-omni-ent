@@ -257,8 +257,6 @@ class FullDuplexRealtimeConnection:
         output = getattr(audio, "output", None)
         if output is not None:
             fields = getattr(output, "model_fields_set", set())
-            if "voice" in fields and output.voice is not None:
-                return "Voice selection"
             if "speed" in fields and output.speed is not None and output.speed != 1:
                 return "Output audio speed"
         return None
@@ -372,14 +370,7 @@ class FullDuplexRealtimeConnection:
         )
         # Do not echo the client's potentially large audio payload.
         wire_item = item.model_copy(update={"content": []})
-        await self._send_event(
-            types.ConversationItemCreatedEvent(
-                event_id=_gen_id("evt"),
-                type="conversation.item.created",
-                previous_item_id=previous_item_id,
-                item=wire_item,  # type: ignore[arg-type]
-            )
-        )
+        await self._send_conversation_item_added_and_done(wire_item, previous_item_id)
         return item
 
     async def _handle_audio_commit(self, event: types.InputAudioBufferCommitEvent):
@@ -1148,14 +1139,7 @@ class FullDuplexRealtimeConnection:
                     # raw <tool_call> text into a truncated transcript.
                     if not pending_tool_calls:
                         s.item_token_ids[item_obj.id] = full_token_ids
-                await self._send_event(
-                    types.ConversationItemCreatedEvent(
-                        event_id=_gen_id("evt"),
-                        type="conversation.item.created",
-                        previous_item_id=previous_item_id,
-                        item=history_item,  # type: ignore[arg-type]
-                    )
-                )
+                await self._send_conversation_item_added_and_done(history_item, previous_item_id)
                 chain_after = history_item.id
 
             # Only now -- after item_duration_ms/item_token_ids are finally
@@ -1213,14 +1197,7 @@ class FullDuplexRealtimeConnection:
                 )
             )
             s.insert_item(fc_item, previous_item_id=chain_after or "root")
-            await self._send_event(
-                types.ConversationItemCreatedEvent(
-                    event_id=_gen_id("evt"),
-                    type="conversation.item.created",
-                    previous_item_id=chain_after,
-                    item=fc_item,  # type: ignore[arg-type]
-                )
-            )
+            await self._send_conversation_item_added_and_done(fc_item, chain_after)
             chain_after = fc_item.id
             function_call_items.append(fc_item)
 
@@ -1323,14 +1300,7 @@ class FullDuplexRealtimeConnection:
             return
         prev_id = s.items[pos - 1].id if pos > 0 else None
 
-        await self._send_event(
-            types.ConversationItemCreatedEvent(
-                event_id=_gen_id("evt"),
-                type="conversation.item.created",
-                previous_item_id=prev_id,
-                item=item,  # type: ignore[arg-type]
-            )
-        )
+        await self._send_conversation_item_added_and_done(item, prev_id)
 
     def _validate_input_item(self, item: Any) -> None:
         for part in getattr(item, "content", None) or []:
@@ -1759,23 +1729,42 @@ class FullDuplexRealtimeConnection:
     #  Server event emission                                              #
     # ------------------------------------------------------------------ #
 
+    async def _send_conversation_item_added_and_done(self, item: Any, previous_item_id: str | None) -> None:
+        try:
+            item_data = self._dump_model(item)
+        except Exception:
+            logger.exception("[realtime] failed to serialize conversation item")
+            self._connected = False
+            return
+
+        for event_type in ("conversation.item.added", "conversation.item.done"):
+            await self._send_json(
+                {
+                    "event_id": _gen_id("evt"),
+                    "type": event_type,
+                    "previous_item_id": previous_item_id,
+                    "item": item_data,
+                }
+            )
+
     async def _send_event(self, event) -> None:
         try:
-            if hasattr(event, "model_dump"):
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore",
-                        message="Pydantic serializer warnings",
-                        category=UserWarning,
-                    )
-                    data = event.model_dump(mode="json", exclude_none=True)
-            else:
-                data = event
+            data = self._dump_model(event) if hasattr(event, "model_dump") else event
         except Exception:
             logger.exception("[realtime] failed to serialize %s", getattr(event, "type", None))
             self._connected = False
             return
         await self._send_payload(data, getattr(event, "type", None))
+
+    @staticmethod
+    def _dump_model(model: Any) -> dict[str, Any]:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Pydantic serializer warnings",
+                category=UserWarning,
+            )
+            return model.model_dump(mode="json", exclude_none=True)
 
     async def _send_json(self, payload: dict) -> None:
         await self._send_payload(payload, payload.get("type"))
