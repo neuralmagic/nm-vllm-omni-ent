@@ -12,6 +12,7 @@ import numpy as np
 
 from vllm_omni.entrypoints.openai.tts_adapters import register_tts_adapter
 from vllm_omni.entrypoints.openai.tts_adapters.base import ARTTSAdapter, PreparedRequest
+from vllm_omni.model_executor.models.omnivoice.prompt_utils import prepare_instruct, validate_instruction
 
 if TYPE_CHECKING:
     from vllm_omni.entrypoints.openai.protocol.audio import OpenAICreateSpeechRequest
@@ -25,6 +26,9 @@ class OmniVoiceAdapter(ARTTSAdapter):
     def validate(self, request: "OpenAICreateSpeechRequest") -> str | None:
         if not request.input or not request.input.strip():
             return "Input text cannot be empty"
+
+        validate_instruction(request.instructions)
+
         return self.ctx.server._apply_uploaded_speaker(request)
 
     async def build(
@@ -35,7 +39,7 @@ class OmniVoiceAdapter(ARTTSAdapter):
         if request.ref_audio:
             wav, sr = await server._resolve_ref_audio(request.ref_audio)
             prompt["ref_audio"] = (np.asarray(wav, dtype=np.float32), sr)
-        if request.ref_text:
+        if request.ref_text and request.ref_text.strip():
             prompt["ref_text"] = request.ref_text
         if request.voice:
             voice_lower = request.voice.lower()
@@ -45,5 +49,5 @@ class OmniVoiceAdapter(ARTTSAdapter):
         if request.language:
             prompt["lang"] = request.language
         if request.instructions:
-            prompt["instruct"] = request.instructions
+            prompt["instruct"] = prepare_instruct(request.instructions)
         return PreparedRequest(prompt=prompt, tts_params={}, model_type="omnivoice")
