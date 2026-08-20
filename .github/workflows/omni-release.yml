@@ -1,22 +1,34 @@
-# Triggers the omni-pipeline workflow in nm-cicd for tags matching omni-*,
-# or manually via workflow_dispatch.
+# Triggers the omni-pipeline workflow in nm-cicd for:
+#   - tags matching omni-*
+#   - pull requests (full pipeline + commit status on PR head)
+#   - manual workflow_dispatch
 #
 # On tag push, defaults are fixed:
-#   - cicd_ref=feature/vllm-omni-tp
+#   - cicd_ref=feature/vllm-omni-tp  (switch to main after nm-cicd omni PR merges)
 #   - wf_category=RELEASE
 #   - run_ocp_validation=true
 #   - python=3.12
+#
+# On pull request, defaults:
+#   - cicd_ref=feature/vllm-omni-tp
+#   - wf_category=DEBUG
+#   - run_ocp_validation=true
+#   - report_commit_status=true on PR head SHA
 #
 # This workflow dispatches once and exits — the full build+test cycle runs in
 # nm-cicd as a single workflow run (no cross-repo polling).
 
 name: omni release
-run-name: Omni ${{ github.event_name == 'push' && github.ref_name || inputs.ref }} - ${{ github.actor }}
+run-name: >-
+  ${{ github.event_name == 'pull_request' && format('Omni PR #{0} — {1}', github.event.pull_request.number, github.actor) || format('Omni {0} — {1}', github.event_name == 'push' && github.ref_name || inputs.ref || github.ref_name, github.actor) }}
 
 on:
   push:
     tags:
       - "omni-*"
+
+  pull_request:
+    types: [opened, synchronize, reopened]
 
   workflow_dispatch:
     inputs:
@@ -58,14 +70,24 @@ on:
         type: string
         required: false
         default: ""
+      report_commit_status:
+        description: "Post nm-cicd/omni-pipeline commit status (use for PR branch validation)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: omni-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: true
 
 env:
-  REF: ${{ github.event_name == 'push' && github.ref_name || inputs.ref || github.ref_name }}
-  CICD_REF: ${{ github.event_name == 'push' && 'feature/vllm-omni-tp' || inputs.cicd_ref }}
+  REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || (github.event_name == 'push' && github.ref_name || inputs.ref || github.ref_name) }}
+  CICD_REF: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'feature/vllm-omni-tp' || inputs.cicd_ref }}
   PYTHON: ${{ inputs.python || '3.12' }}
   VLLM_RUN_ID: ${{ inputs.vllm_run_id || '' }}
-  WF_CATEGORY: ${{ github.event_name == 'push' && 'RELEASE' || inputs.wf_category || 'DEBUG' }}
-  RUN_OCP: ${{ github.event_name == 'push' && 'true' || inputs.run_ocp_validation }}
+  WF_CATEGORY: ${{ github.event_name == 'push' && 'RELEASE' || (github.event_name == 'pull_request' && 'DEBUG' || inputs.wf_category || 'DEBUG') }}
+  RUN_OCP: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'true' || inputs.run_ocp_validation }}
+  SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+  REPORT_STATUS: ${{ (github.event_name == 'pull_request' || inputs.report_commit_status) && 'true' || 'false' }}
   MODEL_VAL_REF: ${{ inputs.model_validation_configs_ref || 'main' }}
   TESTING_OPTIONS: ${{ inputs.testing_options_flags || '' }}
 
@@ -103,6 +125,8 @@ jobs:
             -f "testing_options_flags=$TESTING_OPTIONS"
             -f "source_run_id=${{ github.run_id }}"
             -f "source_repo=${{ github.repository }}"
+            -f "source_sha=$SOURCE_SHA"
+            -f "report_commit_status=$REPORT_STATUS"
           )
 
           if [[ -n "$VLLM_RUN_ID" ]]; then
@@ -123,9 +147,11 @@ jobs:
             echo "| nm-cicd ref | \`$CICD_REF\` |"
             echo "| Omni repo | \`${{ github.repository }}\` |"
             echo "| Omni ref | \`$REF\` |"
+            echo "| Source SHA | \`$SOURCE_SHA\` |"
             echo "| python | \`$PYTHON\` |"
             echo "| wf_category | \`$WF_CATEGORY\` |"
             echo "| run_ocp_validation | \`$RUN_OCP\` |"
+            echo "| report_commit_status | \`$REPORT_STATUS\` |"
             echo "| vllm_run_id | \`${VLLM_RUN_ID:-auto from midstream/vllm-wheels.yml}\` |"
             echo "| model_validation_configs_ref | \`$MODEL_VAL_REF\` |"
             echo "| testing_options_flags | \`$TESTING_OPTIONS\` |"
