@@ -761,9 +761,6 @@ class FullDuplexRealtimeConnection:
         usage = ResponseUsage()
         total_audio_samples = 0
 
-        text_finished = False
-        audio_finished = False
-
         previous_text = ""
         previous_token_ids: list[int] = []
         pending_tool_calls: dict[int, dict[str, Any]] = {}
@@ -884,8 +881,6 @@ class FullDuplexRealtimeConnection:
                     break
 
                 output_type = getattr(output, "final_output_type", "text")
-                first_out_dbg = output.outputs[0] if output.outputs else None
-
                 if output_type == "audio":
                     audio_chunks = self._extract_audio_deltas(output)
                     for chunk in audio_chunks:
@@ -913,10 +908,6 @@ class FullDuplexRealtimeConnection:
                                 delta=b64,
                             )
                         )
-                    if first_out_dbg and first_out_dbg.finish_reason is not None:
-                        audio_finished = True
-                        if text_finished:
-                            break
                     continue
 
                 if output.outputs:
@@ -958,11 +949,6 @@ class FullDuplexRealtimeConnection:
                     elif delta_text:
                         await emit_content_delta(delta_text)
 
-                    finish = first_out.finish_reason
-                    if finish is not None:
-                        text_finished = True
-                        if not is_audio or audio_finished:
-                            break
         except asyncio.CancelledError:
             cancelled = True
         finally:
