@@ -24,15 +24,6 @@ Use the **Omni release** workflow from the [Actions tab](../../actions/workflows
 
 The Ent workflow dispatches once (GitHub App token). The full build+test cycle runs as a **single nm-cicd workflow run** — no cross-repo polling.
 
-**Legacy:** [Midstream Build](../../actions/workflows/midstream-build.yml) (`midstream-build.yml`) is deprecated; use **Omni release** instead. Removal is planned for a later phase.
-
-| Build Step (legacy) | Replacement |
-|---------------------|-------------|
-| **full-chain** | Omni release (tag or manual with `run_ocp_validation=true`) |
-| **omni-wheel** | nm-cicd `accept-sync.yml` with `build_image=false` |
-| **docker-image** | nm-cicd `accept-sync.yml` with existing `vllm_run_id` + `omni_run_id` |
-| **vllm-wheel** | nm-cicd `build-whl.yml` for `neuralmagic/nm-vllm-ent` (manual) |
-
 ### Tag-Based Triggers (Full Chain)
 
 Pushing a tag matching `omni-*` runs the **Omni release** workflow, which triggers nm-cicd `omni-pipeline.yml` — accept-sync (wheel + image + partitions) and OCP model validation in one run. The workflow reads `midstream/vllm-version` and looks up the vLLM wheel run ID from `midstream/vllm-wheels.yml`.
@@ -47,7 +38,7 @@ The tag name is freeform — use whatever makes sense: `omni-v0.20.0`, `omni-dou
 
 ## Secret: CICD_APP_ID / CICD_APP_PRIVATE_KEY
 
-The **Omni release** workflow uses the org GitHub App (`CICD_APP_ID`, `CICD_APP_PRIVATE_KEY`) to dispatch nm-cicd workflows — the same pattern as `nm-vllm-ent` release. Legacy `midstream-build.yml` also uses the GitHub App token (not `CICD_OMNI_PAT`).
+The **Omni release** workflow uses the org GitHub App (`CICD_APP_ID`, `CICD_APP_PRIVATE_KEY`) to dispatch nm-cicd workflows — the same pattern as `nm-vllm-ent` release.
 
 ## vLLM Version Mapping
 
@@ -79,14 +70,6 @@ v0.20.0:
 - **New wheel for existing version:** update the `run_id` for that version entry
 
 **How the workflow uses it:** when `vllm_run_id` is not provided as input (including all tag-push triggers), the workflow reads `vllm-version`, looks up the run ID from `vllm-wheels.yml`, and uses it automatically. If you provide `vllm_run_id` explicitly, it overrides the mapping.
-
-### Default Runner Labels
-
-| Step | Default Label | Override Input |
-|------|---------------|----------------|
-| vllm-wheel | `k8s-a100-build-13-0` | `build_label_wheel` |
-| omni-wheel | `k8s-a100-build-13-0` | `build_label_wheel` |
-| docker-image | `ibm-wdc-k8s-h100-dind` | `build_label_image` |
 
 ### Manual CLI Alternative
 
@@ -132,6 +115,6 @@ gh workflow run build-image.yml --repo neuralmagic/nm-cicd \
 Workflows in `.github/workflows/` are a mix of upstream and midstream:
 
 - **Upstream workflows** (e.g. `build_wheel.yml`, `pre-commit.yml`) — carried forward from `vllm-project/vllm-omni`
-- **Midstream workflows** — `omni-release.yml` (tag, pull request, manual), `midstream-build.yml` (deprecated)
+- **Midstream workflows** — `omni-release.yml` (tag, pull request, manual)
 
 See [.github-upstream-policy.md](.github-upstream-policy.md) for rebase guidelines.
