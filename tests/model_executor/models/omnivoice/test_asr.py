@@ -320,7 +320,7 @@ def test_voice_clone_duration_uses_resolved_text_and_reference_token_count(pipel
     pipeline.duration_estimator = DurationEstimator()
     ref_audio_tokens = torch.zeros(8, 73, dtype=torch.long)
 
-    assert pipeline._estimate_target_len("target", "transcribed reference", ref_audio_tokens) == 17
+    assert pipeline._estimate_target_length("target", "transcribed reference", ref_audio_tokens) == 17
     assert calls == [("target", "transcribed reference", 73)]
 
 
@@ -334,5 +334,5 @@ def test_text_only_duration_keeps_fallback_inputs(pipeline):
 
     pipeline.duration_estimator = DurationEstimator()
 
-    assert pipeline._estimate_target_len("target", None, None) == 4
+    assert pipeline._estimate_target_length("target", None, None) == 4
     assert calls == [("target", "Nice to meet you.", 25)]

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 from collections import OrderedDict
@@ -25,6 +26,7 @@ import torchaudio
 from tokenizers import Tokenizer as HFTokenizer
 from torch import nn
 from vllm.logger import init_logger
+from vllm.utils.platform_utils import is_pin_memory_available
 
 from vllm_omni.diffusion.data import DiffusionOutput, OmniDiffusionConfig
 from vllm_omni.diffusion.distributed.utils import get_local_device
@@ -34,7 +36,9 @@ from vllm_omni.diffusion.models.omnivoice.audio import (
     postprocess_generated_audio,
     prepare_reference_audio,
 )
+from vllm_omni.diffusion.models.omnivoice.chunking import join_audio_chunks, split_text_into_chunks
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
+from vllm_omni.errors import OmniClientError
 from vllm_omni.model_executor.models.omnivoice.duration import RuleDurationEstimator
 from vllm_omni.model_executor.models.omnivoice.omnivoice_decoder import OmniVoiceDecoder
 from vllm_omni.model_executor.models.omnivoice.omnivoice_generator import OmniVoiceGenerator
@@ -166,6 +170,46 @@ def _tokenize_with_nonverbal_tags(text: str, tokenizer) -> list[int]:
     return combined
 
 
+def _parse_chunking_seconds(
+    name: str,
+    value: object,
+    *,
+    allow_zero: bool,
+) -> float:
+    if isinstance(value, bool):
+        raise OmniClientError(f"{name} must be a number")
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError) as error:
+        raise OmniClientError(f"{name} must be a number") from error
+
+    if not math.isfinite(seconds) or seconds < 0 or (seconds == 0 and not allow_zero):
+        requirement = "non-negative" if allow_zero else "positive"
+        raise OmniClientError(f"{name} must be a finite {requirement} number")
+    return seconds
+
+
+def _copy_audio_to_cpu(
+    audio: torch.Tensor,
+    copy_stream: torch.Stream | None,
+) -> torch.Tensor:
+    if audio.device.type == "cpu":
+        return audio
+    if copy_stream is None:
+        return audio.detach().cpu()
+
+    host_audio = torch.empty_like(audio, device="cpu", pin_memory=True)
+    compute_stream = torch.accelerator.current_stream()
+    copy_stream.wait_stream(compute_stream)
+    torch.accelerator.set_stream(copy_stream)
+    try:
+        host_audio.copy_(audio, non_blocking=True)
+        audio.record_stream(copy_stream)
+    finally:
+        torch.accelerator.set_stream(compute_stream)
+    return host_audio
+
+
 class OmniVoicePipeline(nn.Module, SupportAudioOutput):
     """OmniVoice text-to-speech pipeline for the diffusion engine.
 
@@ -179,6 +223,7 @@ class OmniVoicePipeline(nn.Module, SupportAudioOutput):
         super().__init__()
         self.od_config = od_config
         self.device = get_local_device()
+        self.pin_memory = is_pin_memory_available()
         self.model_path = od_config.model
         self._initialize_asr(getattr(od_config, "additional_config", None))
         self._inline_reference_cache: OrderedDict[tuple[object, ...], dict[str, object]] = OrderedDict()
@@ -303,26 +348,6 @@ class OmniVoicePipeline(nn.Module, SupportAudioOutput):
             return self._transcribe_ref_audio(ref_audio)
         return ref_text
 
-    def _estimate_target_len(
-        self,
-        text: str,
-        ref_text: str | None,
-        ref_audio_tokens: torch.Tensor | None,
-    ) -> int:
-        """Estimate target audio tokens using resolved voice-clone conditioning."""
-        if ref_audio_tokens is None or not ref_text:
-            ref_text = "Nice to meet you."
-            num_ref_audio_tokens = 25
-        else:
-            num_ref_audio_tokens = ref_audio_tokens.size(-1)
-
-        target_len = self.duration_estimator.estimate_duration(
-            text,
-            ref_text,
-            num_ref_audio_tokens,
-        )
-        return max(1, int(target_len))
-
     def _encode_ref_audio(self, audio_signal: torch.Tensor, sr: int) -> torch.Tensor:
         """Encode reference audio to 8-codebook tokens for voice cloning."""
         if self.audio_tokenizer is None:
@@ -367,6 +392,170 @@ class OmniVoicePipeline(nn.Module, SupportAudioOutput):
         while len(self._inline_reference_cache) > _INLINE_CACHE_MAX_ENTRIES:
             self._inline_reference_cache.popitem(last=False)
 
+    def _estimate_target_length(
+        self,
+        text: str,
+        ref_text: str | None,
+        ref_audio_tokens: torch.Tensor | None,
+    ) -> int:
+        if ref_audio_tokens is None or not ref_text:
+            ref_text = "Nice to meet you."
+            ref_length = 25
+        else:
+            ref_length = ref_audio_tokens.shape[-1]
+        return max(1, int(self.duration_estimator.estimate_duration(text, ref_text, ref_length)))
+
+    def _generate_tokens(
+        self,
+        *,
+        text: str,
+        target_length: int,
+        lang: str,
+        instruct: str,
+        ref_text: str | None,
+        ref_audio_tokens: torch.Tensor | None,
+        generator: torch.Generator,
+    ) -> torch.Tensor:
+        device = self.device
+        num_codebooks = self.config.num_audio_codebook
+        mask_id = self.config.audio_mask_id
+
+        style_text = f"<|denoise|><|lang_start|>{lang}<|lang_end|><|instruct_start|>{instruct}<|instruct_end|>"
+        full_text = _combine_text(ref_text=ref_text, text=text)
+        wrapped_text = f"<|text_start|>{full_text}<|text_end|>"
+        encoding_ids = self.tokenizer.encode(style_text).ids + _tokenize_with_nonverbal_tags(
+            wrapped_text, self.tokenizer
+        )
+        text_tokens = torch.tensor(
+            encoding_ids,
+            dtype=torch.long,
+            pin_memory=self.pin_memory,
+        ).to(device, non_blocking=True)
+        text_length = text_tokens.shape[0]
+
+        text_ids = text_tokens.unsqueeze(0).repeat(num_codebooks, 1)
+        target_ids = torch.full(
+            (num_codebooks, target_length),
+            mask_id,
+            dtype=torch.long,
+            device=device,
+        )
+        if ref_audio_tokens is not None:
+            conditional_ids = torch.cat([text_ids, ref_audio_tokens, target_ids], dim=1)
+        else:
+            conditional_ids = torch.cat([text_ids, target_ids], dim=1)
+        conditional_length = conditional_ids.shape[1]
+
+        max_length = max(conditional_length, target_length)
+        unconditional_ids = torch.full(
+            (num_codebooks, max_length),
+            mask_id,
+            dtype=torch.long,
+            device=device,
+        )
+
+        batch_input_ids = torch.stack([conditional_ids, unconditional_ids])
+        batch_audio_mask = torch.zeros(2, max_length, dtype=torch.bool, device=device)
+        batch_audio_mask[0, text_length:conditional_length] = True
+        batch_audio_mask[1, :target_length] = True
+
+        batch_attention_mask = torch.zeros(
+            2,
+            1,
+            max_length,
+            max_length,
+            dtype=torch.bool,
+            device=device,
+        )
+        batch_attention_mask[0, :, :conditional_length, :conditional_length] = True
+        batch_attention_mask[1, :, :target_length, :target_length] = True
+
+        return self.generator(
+            input_ids=batch_input_ids,
+            audio_mask=batch_audio_mask,
+            attention_mask=batch_attention_mask,
+            target_lens=[target_length],
+            conditional_lens=[conditional_length],
+            num_step=self.num_step,
+            guidance_scale=self.guidance_scale,
+            t_shift=self.t_shift,
+            layer_penalty_factor=self.layer_penalty_factor,
+            position_temperature=self.position_temperature,
+            class_temperature=self.class_temperature,
+            generator=generator,
+        )
+
+    def _generate_audio(
+        self,
+        *,
+        text: str,
+        lang: str,
+        instruct: str,
+        ref_text: str | None,
+        ref_audio_tokens: torch.Tensor | None,
+        audio_chunk_duration: float,
+        audio_chunk_threshold: float,
+        generator: torch.Generator,
+    ) -> torch.Tensor:
+        target_length = self._estimate_target_length(text, ref_text, ref_audio_tokens)
+        if target_length <= audio_chunk_threshold * self.config.frame_rate:
+            tokens = self._generate_tokens(
+                text=text,
+                target_length=target_length,
+                lang=lang,
+                instruct=instruct,
+                ref_text=ref_text,
+                ref_audio_tokens=ref_audio_tokens,
+                generator=generator,
+            )
+            return self.decoder(tokens)
+
+        chunk_frame_budget = audio_chunk_duration * self.config.frame_rate
+        max_chunk_characters = (
+            len(text)
+            if chunk_frame_budget >= target_length
+            else max(1, int(chunk_frame_budget * len(text) / target_length))
+        )
+        text_chunks = split_text_into_chunks(text, max_chunk_characters)
+        logger.debug(
+            "Split OmniVoice request into %d text chunks with a %d character target",
+            len(text_chunks),
+            max_chunk_characters,
+        )
+
+        decoded_chunks: list[torch.Tensor] = []
+        audio_copy_stream: torch.Stream | None = None
+        fixed_ref_text = ref_text
+        fixed_ref_audio_tokens = ref_audio_tokens
+        for chunk_index, text_chunk in enumerate(text_chunks):
+            chunk_target_length = self._estimate_target_length(
+                text_chunk,
+                fixed_ref_text,
+                fixed_ref_audio_tokens,
+            )
+            tokens = self._generate_tokens(
+                text=text_chunk,
+                target_length=chunk_target_length,
+                lang=lang,
+                instruct=instruct,
+                ref_text=fixed_ref_text,
+                ref_audio_tokens=fixed_ref_audio_tokens,
+                generator=generator,
+            )
+            decoded_audio = self.decoder(tokens)
+            if decoded_audio.device.type != "cpu" and self.pin_memory and audio_copy_stream is None:
+                audio_copy_stream = torch.Stream(device=decoded_audio.device)
+            # Keep completed chunks on CPU. Storing them on GPU makes memory
+            # grow with the generated audio length.
+            decoded_chunks.append(_copy_audio_to_cpu(decoded_audio, audio_copy_stream))
+            if chunk_index == 0 and fixed_ref_audio_tokens is None:
+                fixed_ref_text = text_chunk
+                fixed_ref_audio_tokens = tokens[0]
+
+        if audio_copy_stream is not None:
+            audio_copy_stream.synchronize()
+        return join_audio_chunks(decoded_chunks, self.sample_rate)
+
     @torch.inference_mode()
     def forward(self, req: DiffusionRequestBatch) -> DiffusionOutput:
         """Generate speech audio from text, optionally with voice cloning.
@@ -381,7 +570,28 @@ class OmniVoicePipeline(nn.Module, SupportAudioOutput):
         lang = "None"
         instruct = "None"
         extra = req.sampling_params.extra_args or {}
-        seed = extra.get("seed", None)
+
+        try:
+            audio_chunk_duration = _parse_chunking_seconds(
+                "audio_chunk_duration",
+                extra.get("audio_chunk_duration", self.config.audio_chunk_duration),
+                allow_zero=False,
+            )
+            audio_chunk_threshold = _parse_chunking_seconds(
+                "audio_chunk_threshold",
+                extra.get("audio_chunk_threshold", self.config.audio_chunk_threshold),
+                allow_zero=True,
+            )
+        except OmniClientError as error:
+            return DiffusionOutput.from_exception(error)
+
+        generator = req.sampling_params.generator
+        if isinstance(generator, list):
+            if len(generator) != 1:
+                return DiffusionOutput(error="OmniVoice requires one generator per request")
+            generator = generator[0]
+        if generator is None:
+            raise RuntimeError("OmniVoice requires the diffusion worker to initialize the request generator")
 
         voice_name = None
         if isinstance(prompt, dict):
@@ -427,21 +637,14 @@ class OmniVoicePipeline(nn.Module, SupportAudioOutput):
             if instruct is None:
                 instruct = mm_kwargs.get("instruct")
 
-            if isinstance(ref_text, str):
-                ref_text = ref_text.strip() or None
-
-            if not text:
+            if not text or not str(text).strip():
                 return DiffusionOutput(error="Empty text prompt")
             lang = lang or "None"
             instruct = instruct or "None"
         else:
             text = str(prompt)
-            if not text:
+            if not text or not text.strip():
                 return DiffusionOutput(error="Empty text prompt")
-
-        device = self.device
-        num_cb = self.config.num_audio_codebook
-        mask_id = self.config.audio_mask_id
 
         ref_audio_tokens = None
         reference_rms = None
@@ -461,7 +664,7 @@ class OmniVoicePipeline(nn.Module, SupportAudioOutput):
                 )
                 cached = self._speaker_cache.get(_cache_key)
                 if cached is not None and (not needs_asr or cached.get("ref_text")):
-                    ref_audio_tokens = cached["ref_audio_tokens"].to(device)
+                    ref_audio_tokens = cached["ref_audio_tokens"].to(self.device)
                     reference_rms = cached["reference_rms"]
                     if needs_asr:
                         ref_text = cached["ref_text"]
@@ -494,7 +697,7 @@ class OmniVoicePipeline(nn.Module, SupportAudioOutput):
                     inline_cache_key = self._inline_cache_key(prepared_audio, preparation_mode)
                     cached = self._get_inline_cache(inline_cache_key)
                     if cached is not None:
-                        ref_audio_tokens = cached["ref_audio_tokens"].to(device)
+                        ref_audio_tokens = cached["ref_audio_tokens"].to(self.device)
                         reference_rms = cached["reference_rms"]
                         if needs_asr:
                             ref_text = cached["ref_text"]
@@ -512,7 +715,7 @@ class OmniVoicePipeline(nn.Module, SupportAudioOutput):
                 ref_audio_tokens = self._encode_ref_audio(
                     torch.from_numpy(prepared_audio.waveform),
                     prepared_audio.sample_rate,
-                ).to(device)
+                ).to(self.device)
 
                 # Store named and inline entries for the matching preparation mode.
                 if _cache_key is not None:
@@ -539,69 +742,21 @@ class OmniVoicePipeline(nn.Module, SupportAudioOutput):
             if ref_text:
                 ref_text = add_reference_punctuation(ref_text)
 
-        target_len = self._estimate_target_len(text, ref_text, ref_audio_tokens)
-
-        # Build text prompt with control tokens
-        style_text = f"<|denoise|><|lang_start|>{lang}<|lang_end|><|instruct_start|>{instruct}<|instruct_end|>"
-        full_text = _combine_text(ref_text=ref_text, text=text)
-        wrapped_text = f"<|text_start|>{full_text}<|text_end|>"
-        style_tokens = self.tokenizer.encode(style_text).ids
-        text_tokens = _tokenize_with_nonverbal_tags(wrapped_text, self.tokenizer)
-        encoding_ids = style_tokens + text_tokens
-        text_tokens = torch.tensor(encoding_ids, dtype=torch.long, device=device)
-        text_len = text_tokens.shape[0]
-
-        # Build conditional + unconditional batches [2, 8, max_len]
-        text_ids = text_tokens.unsqueeze(0).repeat(num_cb, 1)
-        target_ids = torch.full((num_cb, target_len), mask_id, dtype=torch.long, device=device)
-
-        if ref_audio_tokens is not None:
-            cond_ids = torch.cat([text_ids, ref_audio_tokens, target_ids], dim=1)
-        else:
-            cond_ids = torch.cat([text_ids, target_ids], dim=1)
-        cond_len = cond_ids.shape[1]
-        uncond_ids = target_ids.clone()
-        uncond_len = target_len
-        max_len = max(cond_len, uncond_len)
-        if uncond_len < max_len:
-            pad = torch.full(
-                (num_cb, max_len - uncond_len),
-                mask_id,
-                dtype=torch.long,
-                device=device,
-            )
-            uncond_ids = torch.cat([uncond_ids, pad], dim=1)
-
-        batch_input_ids = torch.stack([cond_ids, uncond_ids])
-
-        batch_audio_mask = torch.zeros(2, max_len, dtype=torch.bool, device=device)
-        batch_audio_mask[0, text_len:cond_len] = True
-        batch_audio_mask[1, :uncond_len] = True
-
-        batch_attn_mask = torch.zeros(2, 1, max_len, max_len, dtype=torch.bool, device=device)
-        batch_attn_mask[0, :, :cond_len, :cond_len] = True
-        batch_attn_mask[1, :, :uncond_len, :uncond_len] = True
-
-        # Run 32-step iterative unmasking
-        tokens = self.generator(
-            input_ids=batch_input_ids,
-            audio_mask=batch_audio_mask,
-            attention_mask=batch_attn_mask,
-            target_lens=[target_len],
-            num_step=self.num_step,
-            guidance_scale=self.guidance_scale,
-            t_shift=self.t_shift,
-            layer_penalty_factor=self.layer_penalty_factor,
-            position_temperature=self.position_temperature,
-            class_temperature=self.class_temperature,
-            seed=seed,
+        audio = self._generate_audio(
+            text=text,
+            lang=lang,
+            instruct=instruct,
+            ref_text=ref_text,
+            ref_audio_tokens=ref_audio_tokens,
+            audio_chunk_duration=audio_chunk_duration,
+            audio_chunk_threshold=audio_chunk_threshold,
+            generator=generator,
         )
-        # Decode tokens to audio
-        audio = self.decoder(tokens)  # [1, 1, samples]
+
         if ref_audio_tokens is None:
             return DiffusionOutput(output=audio)
 
-        audio_np = audio.squeeze(0).detach().cpu().float().numpy()
+        audio_np = audio.squeeze(0).numpy(force=True)
         audio_np = postprocess_generated_audio(
             audio_np,
             sample_rate=self.sample_rate,

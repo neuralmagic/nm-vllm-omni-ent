@@ -795,7 +795,9 @@ class OmniVoiceGenerator(nn.Module):
         audio_mask: torch.Tensor,
         attention_mask: torch.Tensor,
         target_lens: list[int],
+        conditional_lens: list[int],
         seed: int | None = None,
+        generator: torch.Generator | None = None,
         num_step: int = 32,
         guidance_scale: float = 2.0,
         t_shift: float = 0.1,
@@ -810,6 +812,8 @@ class OmniVoiceGenerator(nn.Module):
             audio_mask: [2*B, S] - True for audio positions
             attention_mask: [2*B, 1, S, S] - attention mask
             target_lens: List of target audio lengths per batch item
+            conditional_lens: List of conditional sequence lengths per batch item
+            generator: Request-level random number generator
             num_step: Number of unmasking steps
             guidance_scale: CFG scale
             t_shift: Time shift for schedule
@@ -821,13 +825,16 @@ class OmniVoiceGenerator(nn.Module):
             tokens: [B, 8, max_target_len] - generated audio tokens
         """
         B = len(target_lens)
+        if len(conditional_lens) != B:
+            raise ValueError("conditional_lens must contain one length per batch item")
         device = input_ids.device
         max_target_len = max(target_lens)
         mask_id = self.config.audio_mask_id
         num_codebooks = self.config.num_audio_codebook
-        if seed is None:
-            seed = random.randint(0, 2**63 - 1)
-        generator = torch.Generator(device=device).manual_seed(seed)
+        if generator is None:
+            if seed is None:
+                seed = random.randint(0, 2**63 - 1)
+            generator = torch.Generator(device=device).manual_seed(seed)
 
         # Initialize all target tokens as [MASK]
         tokens = torch.full(
@@ -859,13 +866,6 @@ class OmniVoiceGenerator(nn.Module):
 
         layer_ids = torch.arange(num_codebooks, device=device).view(1, -1, 1)
 
-        # Compute c_lens for extracting target region from full sequence
-        c_lens = []
-        for i in range(B):
-            # Conditional sequence length = number of non-padding positions
-            c_len = attention_mask[i, 0, 0].sum().item()
-            c_lens.append(int(c_len))
-
         # Main iterative loop
         for step in range(num_step):
             if self._cuda_graph_fwd is not None and input_ids.is_cuda:
@@ -881,7 +881,7 @@ class OmniVoiceGenerator(nn.Module):
                 if k <= 0:
                     continue
 
-                c_len = c_lens[i]
+                c_len = conditional_lens[i]
                 t_len = target_lens[i]
 
                 # Extract logits for target region
