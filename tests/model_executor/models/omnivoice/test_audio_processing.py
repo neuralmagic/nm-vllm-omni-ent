@@ -292,7 +292,9 @@ def _build_fake_pipeline(monkeypatch, prepared_waveform, *, asr_text="reference 
     model = pipeline_omnivoice.OmniVoicePipeline.__new__(pipeline_omnivoice.OmniVoicePipeline)
     torch.nn.Module.__init__(model)
     model.device = torch.device("cpu")
-    model.config = SimpleNamespace(num_audio_codebook=2, audio_mask_id=-1)
+    model.config = SimpleNamespace(
+        num_audio_codebook=2, audio_mask_id=-1, audio_chunk_duration=15.0, audio_chunk_threshold=30.0, frame_rate=25
+    )
     model.audio_tokenizer = SimpleNamespace(config=SimpleNamespace(sample_rate=_SAMPLE_RATE, hop_length=_HOP_LENGTH))
     model.tokenizer = SimpleNamespace(encode=lambda text: SimpleNamespace(ids=[1, 2]))
     model.generator = _FakeGenerator(num_codebooks=2)
@@ -307,6 +309,7 @@ def _build_fake_pipeline(monkeypatch, prepared_waveform, *, asr_text="reference 
     model.class_temperature = 1.0
     model.sample_rate = _SAMPLE_RATE
     model._inline_reference_cache = OrderedDict()
+    model.pin_memory = True
 
     prepare_calls = []
     encoded_calls = []
@@ -327,7 +330,7 @@ def _build_fake_pipeline(monkeypatch, prepared_waveform, *, asr_text="reference 
 def _request(prompt):
     return SimpleNamespace(
         prompts=[prompt],
-        sampling_params=SimpleNamespace(extra_args={}),
+        sampling_params=SimpleNamespace(generator=_FakeGenerator(num_codebooks=2), extra_args={}),
     )
 
 
