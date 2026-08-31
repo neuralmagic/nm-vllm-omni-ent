@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
 from __future__ import annotations
 
@@ -47,6 +47,16 @@ def test_reference_audio_normalization_and_hop_alignment():
     assert prepared.waveform.shape == (1, _HOP_LENGTH)
     assert prepared.original_rms == pytest.approx(0.05, abs=1e-6)
     assert np.sqrt(np.mean(prepared.waveform**2)) == pytest.approx(0.1, abs=1e-4)
+
+
+def test_reference_audio_normalization_clips_peaky_quiet_waveform():
+    waveform = np.zeros(7056, dtype=np.float32)
+    waveform[waveform.size // 2] = 1.0
+
+    prepared = _prepare(waveform)
+
+    assert prepared.original_rms == pytest.approx(0.01190476, abs=1e-8)
+    assert np.max(np.abs(prepared.waveform)) == 1.0
 
 
 def test_reference_audio_at_or_above_target_rms_is_not_rescaled():
@@ -258,7 +268,7 @@ def test_generated_zero_audio_remains_finite():
 class _FakeASR:
     def __init__(self, text: str):
         self.text = text
-        self.inputs = []
+        self.inputs: list[dict[str, object]] = []
 
     def __call__(self, audio_input):
         self.inputs.append(audio_input)
