@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
 """Audio preparation and output processing for OmniVoice."""
 
@@ -324,6 +324,7 @@ def prepare_reference_audio(
     original_rms = float(np.sqrt(np.mean(waveform**2))) if waveform.size else 0.0
     if 0 < original_rms < 0.1:
         waveform = waveform * (0.1 / original_rms)
+        waveform = np.clip(waveform, -1.0, 1.0)
 
     if trim_long:
         waveform = trim_long_audio(waveform, target_sample_rate)
