@@ -44,6 +44,19 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
+class StageUnavailableError(RuntimeError):
+    """Raised when dispatch cannot reach a live replica of a stage.
+
+    Deliberately a ``RuntimeError`` subclass (not ``EngineDeadError``): no
+    engine died at the raise site — the stage's replica set is empty or the
+    chosen slot was evicted, which is a routing/capacity condition and, in
+    distributed mode, recoverable. Dispatch guards catch exactly this type so
+    unrelated ``RuntimeError``s keep failing fast, and existing
+    ``EngineDeadError`` handlers (teardown-on-dead, poll-path eviction) are
+    not silently enrolled.
+    """
+
+
 @dataclass
 class _ReplicaMetrics:
     """Per-replica metrics accumulators owned by a stage pool."""

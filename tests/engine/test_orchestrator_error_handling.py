@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Tests for error propagation paths within the Orchestrator.
 
 Covers:
@@ -15,7 +15,9 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from vllm.sampling_params import SamplingParams
 from vllm.v1.engine.exceptions import EngineDeadError
+from vllm.v1.serial_utils import MsgpackEncoder
 
 from vllm_omni.engine.messages import EngineQueueMessage, ErrorMessage, ShutdownRequestMessage
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams
@@ -33,8 +35,6 @@ pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
 
 def _sampling_params(max_tokens: int = 4):
-    from vllm.sampling_params import SamplingParams
-
     return SamplingParams(max_tokens=max_tokens)
 
 
@@ -48,6 +48,22 @@ async def _get_any_output_message(fixture: OrchestratorFixture, *, timeout: floa
             return fixture.output_sync_q.get_nowait()
         except queue.Empty:
             await asyncio.sleep(0.01)
+
+
+async def _wait_for_error_message(
+    fixture: OrchestratorFixture,
+    *,
+    request_id: str | None = None,
+    max_messages: int = 50,
+) -> ErrorMessage:
+    """Drain output messages until the ErrorMessage arrives, skipping the
+    non-error outputs (e.g. stage metrics, forwarded stage results) that a
+    driven pipeline can interleave ahead of the failure."""
+    for _ in range(max_messages):
+        msg = await _get_any_output_message(fixture)
+        if isinstance(msg, ErrorMessage) and (request_id is None or msg.request_id == request_id):
+            return msg
+    raise AssertionError(f"No ErrorMessage for req={request_id} within {max_messages} messages")
 
 
 @pytest.fixture
@@ -126,6 +142,45 @@ async def test_engine_dead_error_broadcasts_fatal_and_shuts_down(orchestrator_fa
         if orchestrator_fixture.thread.is_alive():
             orchestrator_fixture.request_sync_q.put_nowait(ShutdownRequestMessage())
             orchestrator_fixture.thread.join(timeout=5)
+
+
+class _OverflowOnEncodeStageClient(FakeStageClient):
+    """Msgpack-encodes the request's sampling params on dispatch, as the real
+    StageEngineCoreClient does. We use this to make sure overflow sampling params
+    do not break the orchestrator."""
+
+    async def add_request_async(self, request, *args, **kwargs) -> None:
+        MsgpackEncoder().encode(request.sampling_params)
+        await super().add_request_async(request, *args, **kwargs)  # unreachable
+
+
+@pytest.mark.asyncio
+async def test_encode_overflow_should_fail_request_not_loop(orchestrator_factory) -> None:
+    """Regression test for over-range seed handling."""
+    stage0 = _OverflowOnEncodeStageClient(stage_type="llm", final_output=True)
+    orchestrator_fixture = orchestrator_factory([stage0])
+
+    # seed > 2**63-1 cannot be msgpack-serialized -> the malicious input under test.
+    overflow_params = SamplingParams(seed=2**70)
+
+    await _enqueue_add_request(
+        orchestrator_fixture,
+        request_id="req-overflow",
+        prompt=SimpleNamespace(
+            request_id="req-overflow",
+            prompt_token_ids=[1, 2],
+            sampling_params=overflow_params,
+        ),
+        original_prompt={"prompt": "hi"},
+        sampling_params_list=[overflow_params],
+        final_stage_id=0,
+    )
+
+    error_msg = await _wait_for_error_message(orchestrator_fixture, request_id="req-overflow")
+    assert error_msg.fatal is False
+    assert error_msg.status_code == 400
+    assert orchestrator_fixture.thread.is_alive()
+    assert "req-overflow" not in orchestrator_fixture.orchestrator.request_states
 
 
 # ───────── Diffusion stage error output routing ─────────

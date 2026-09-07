@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 # tests/entrypoints/openai/test_serving_speech.py
 import asyncio
 import base64
@@ -3524,16 +3527,15 @@ class TestCosyVoice3Serving:
         error = cosyvoice3_server._validate_tts_request(request)
         assert error is None
 
-    def test_validate_cosyvoice3_max_new_tokens_range(self, cosyvoice3_server):
-        request = OpenAICreateSpeechRequest(
-            input="Hello",
-            ref_audio="data:audio/wav;base64,abc",
-            ref_text="hello",
-            max_new_tokens=0,
-        )
-        error = cosyvoice3_server._validate_tts_request(request)
-        assert error is not None
-        assert "max_new_tokens" in error
+    def test_validate_cosyvoice3_max_new_tokens_range(self):
+        """Ensure max_new_tokens below the minimum is rejected during request validation."""
+        with pytest.raises(ValidationError, match="max_new_tokens"):
+            OpenAICreateSpeechRequest(
+                input="Hello",
+                ref_audio="data:audio/wav;base64,abc",
+                ref_text="hello",
+                max_new_tokens=0,
+            )
 
     def test_prepare_speech_generation_cosyvoice3(self, cosyvoice3_server, mocker: MockerFixture):
         cosyvoice3_server._build_cosyvoice3_prompt = mocker.AsyncMock(
