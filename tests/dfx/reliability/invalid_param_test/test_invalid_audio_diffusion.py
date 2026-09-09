@@ -62,12 +62,12 @@ _PARAMS = [
         pytest.param({"guidance_scale": 0}, ("guidance_scale", "greater_than", "0"), id="guidance_scale_zero"),
         pytest.param(
             {"num_inference_steps": 0},
-            ("num_inference_steps", "greater_than_equal", "1"),
+            ("num_inference_steps", "greater than or equal to 1"),
             id="num_inference_steps_zero",
         ),
         pytest.param(
             {"num_inference_steps": -1},
-            ("num_inference_steps", "greater_than_equal", "1"),
+            ("num_inference_steps", "greater than or equal to 1"),
             id="num_inference_steps_negative",
         ),
         pytest.param(
