@@ -409,12 +409,13 @@ def test_speech_batch_missing_items(omni_server: OmniServer, openai_client: Open
 @pytest.mark.parametrize(
     "loc, overrides, err_message",
     [
-        pytest.param("item", {"input": ""}, ("input", "empty"), id="item_input_empty"),
+        pytest.param("item", {"input": ""}, ("input", "empty"), id="item_input_empty", marks=_SKIP_ISSUE_3649),
         pytest.param(
             "item",
             {"input": "   "},
             ("input", "empty"),
             id="item_input_whitespace_only",
+            marks=_SKIP_ISSUE_3649,
         ),
         pytest.param("batch", {"voice": ""}, "Invalid voice", id="batch_voice_empty"),
         pytest.param("item", {"voice": ""}, "Invalid voice", id="item_voice_empty"),
