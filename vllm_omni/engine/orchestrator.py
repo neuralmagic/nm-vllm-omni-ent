@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """
 Orchestrator for vLLM-Omni multi-stage runtime.
 
@@ -15,6 +18,7 @@ import asyncio
 import time as _time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
 import janus
@@ -50,7 +54,8 @@ from vllm_omni.engine.messages import (
 )
 from vllm_omni.engine.orchestrator_monitor import create_orch_monitor, replica_key
 from vllm_omni.engine.serialization import serialize_additional_information
-from vllm_omni.engine.stage_pool import StagePool
+from vllm_omni.engine.stage_pool import StagePool, StageUnavailableError
+from vllm_omni.errors import DEFAULT_CLIENT_ERROR_TYPE
 from vllm_omni.metrics.prometheus import OmniRequestCounter
 from vllm_omni.metrics.stat_logger import OmniPrometheusStatLogger
 from vllm_omni.outputs import OmniRequestOutput
@@ -340,8 +345,8 @@ class Orchestrator:
     def __init__(
         self,
         request_async_queue: janus.AsyncQueue[EngineQueueMessage],
-        output_async_queue: janus.AsyncQueue[dict[str, Any]],
-        rpc_async_queue: janus.AsyncQueue[dict[str, Any]],
+        output_async_queue: janus.AsyncQueue[EngineQueueMessage],
+        rpc_async_queue: janus.AsyncQueue[EngineQueueMessage],
         stage_pools: list[StagePool],
         *,
         async_chunk: bool = False,
@@ -682,12 +687,18 @@ class Orchestrator:
         preprocess_ms = msg.preprocess_ms
         if preprocess_ms > 0:
             req_state.pipeline_timings["preprocess_ms"] = preprocess_ms
-        await self.stage_pools[stage_id].submit_initial(
-            request_id,
-            req_state,
-            prompt,
-            prompt_text=msg.output_prompt_text,
-        )
+        if not await self._dispatch_or_fail_request(
+            lambda: self.stage_pools[stage_id].submit_initial(
+                request_id,
+                req_state,
+                prompt,
+                prompt_text=msg.output_prompt_text,
+            ),
+            req_id=request_id,
+            stage_id=stage_id,
+            operation="add_request",
+        ):
+            return
 
         if self.async_chunk and stage_id == 0 and final_stage_id > 0:
             await self._prewarm_async_chunk_stages(request_id, prompt, req_state)
@@ -1090,6 +1101,192 @@ class Orchestrator:
             abort=True,
             close_duplex_sessions=True,
         )
+
+    async def _handle_dead_replica(self, stage_id: int, replica_id: int, error: EngineDeadError) -> None:
+        """Evict a dead stage replica and fail the requests stranded on it (#4285).
+
+        A dead replica must not tear down the whole server: evict it and keep the
+        orchestrator loop alive so remaining live replicas / stages keep serving.
+        If the stage still has a live replica, fail only the requests bound to the
+        dead replica; requests bound to a surviving replica (or not yet bound)
+        keep running and can be (re)dispatched. If the stage has no live replica
+        left, every request routed through it must fail since none can be served.
+        """
+        pool = self.stage_pools[stage_id]
+        logger.error(
+            "[Orchestrator] Stage-%s replica-%s is dead; evicting it and failing its in-flight requests: %s",
+            stage_id,
+            replica_id,
+            error,
+        )
+        pool.evict_replica(replica_id)
+        stage_has_live = bool(pool.live_replica_ids())
+        failed_ids: list[str] = []
+        for req_id, req_state in list(self.request_states.items()):
+            if stage_id not in req_state.stage_submit_ts:
+                continue
+            bound = pool.get_bound_replica_id(req_id)
+            if bound == replica_id or not stage_has_live:
+                await self.output_async_queue.put(
+                    ErrorMessage(
+                        error=str(error),
+                        fatal=True,
+                        request_id=req_id,
+                        stage_id=stage_id,
+                    )
+                )
+                failed_ids.append(req_id)
+        # Use the shared cleanup path so the running counter, PD/CFG state, and
+        # bindings across every stage pool are released (not just this pool).
+        # abort=True stops the failed requests' in-flight work on surviving
+        # stages (abort skips dead/evicted bindings), matching the
+        # distributed-membership eviction path.
+        for req_id in failed_ids:
+            await self._cleanup_request_ids(
+                [req_id, *self._cfg_tracker.cleanup_parent(req_id)],
+                abort=True,
+            )
+
+    async def _fail_request_dead_stage(self, req_id: str, stage_id: int) -> None:
+        """Fail one request whose target stage has no live replica (#4285).
+
+        Used at dispatch sites so a fully dead stage fails just that request
+        instead of raising out of the request/orchestration task and tearing
+        down the server. The cleanup releases the running counter, PD/CFG state,
+        and bindings across every stage pool; it is a no-op for a request that
+        was never registered.
+        """
+        logger.error(
+            "[Orchestrator] req=%s: stage-%d has no live replica; failing the request",
+            req_id,
+            stage_id,
+        )
+        await self.output_async_queue.put(
+            ErrorMessage(
+                error=f"Stage-{stage_id} has no live replica",
+                fatal=True,
+                request_id=req_id,
+                stage_id=stage_id,
+            )
+        )
+        await self._cleanup_request_ids(
+            [req_id, *self._cfg_tracker.cleanup_parent(req_id)],
+            abort=True,
+        )
+
+    async def _fail_request_client_error(
+        self,
+        req_id: str,
+        stage_id: int,
+        error: str,
+        *,
+        close_duplex_sessions: bool = False,
+    ) -> None:
+        """Fail one request with a non-fatal 400 (bad input, engine survives).
+
+        The non-fatal counterpart of `_fail_request_dead_stage`: emits a
+        client-error ErrorMessage (default `fatal=False`) so the engine keeps
+        serving, then releases the request's state across every stage pool.
+        """
+        await self.output_async_queue.put(
+            ErrorMessage(
+                error=error,
+                status_code=HTTPStatus.BAD_REQUEST.value,
+                error_type=DEFAULT_CLIENT_ERROR_TYPE,
+                request_id=req_id,
+                stage_id=stage_id,
+            )
+        )
+        await self._cleanup_request_ids(
+            [req_id, *self._cfg_tracker.cleanup_parent(req_id)],
+            abort=True,
+            close_duplex_sessions=close_duplex_sessions,
+        )
+
+    async def _dispatch_or_fail_request(
+        self,
+        dispatch: Callable[[], Awaitable[Any]],
+        *,
+        req_id: str,
+        stage_id: int,
+        operation: str,
+        dispatch_req_id: str | None = None,
+    ) -> bool:
+        """Run a dispatch action, converting stage unavailability into a
+        single-request failure.
+
+        ``dispatch`` is a thunk rather than a bare coroutine so that replica
+        selection and other argument setup run inside this guard: a synchronous
+        StageUnavailableError raised while building the dispatch is caught here,
+        not left to propagate out of the caller.
+
+        Replica eviction can interleave with any dispatch, surfacing as
+        StageUnavailableError (no live replica / evicted slot) or
+        EngineDeadError (replica died mid-submit before the poll loop evicted
+        it). Both mean "this request cannot be placed", not "the server is
+        broken": fail the request and keep serving (#4285). An OverflowError
+        from encoding an out-of-range request value is likewise failed as a
+        client error (400) rather than killing the loop. Other unrelated errors
+        propagate. Returns False when the request was failed.
+
+        ``req_id`` is the request the failure is attributed to; ``dispatch_req_id``
+        is the id actually being dispatched when it differs (e.g. a CFG companion
+        submitted under its parent's attribution) and is used to locate the
+        replica that died.
+        """
+        try:
+            await dispatch()
+            return True
+        except StageUnavailableError as e:
+            # No specific replica to evict: the stage already has no live
+            # replica or the chosen slot was evicted. Fail just this request.
+            logger.error(
+                "[Orchestrator] %s dispatch for req=%s hit unavailable stage-%s: %s",
+                operation,
+                req_id,
+                stage_id,
+                e,
+            )
+            await self._fail_request_dead_stage(req_id, stage_id)
+            return False
+        except EngineDeadError as e:
+            # A live replica died mid-submit before the poll loop evicted it.
+            # Evict it now (and fail every request bound to it) so a burst of
+            # new requests stops round-robining onto the dead slot until the
+            # poll catches up. Capture the replica before failing this request,
+            # since the failure releases its binding.
+            pool = self.stage_pools[stage_id]
+            dead_replica = pool.get_bound_replica_id(dispatch_req_id or req_id)
+            logger.error(
+                "[Orchestrator] %s dispatch for req=%s hit dead stage-%s replica-%s: %s",
+                operation,
+                req_id,
+                stage_id,
+                dead_replica,
+                e,
+            )
+            await self._fail_request_dead_stage(req_id, stage_id)
+            if dead_replica is not None and dead_replica in pool.live_replica_ids():
+                await self._handle_dead_replica(stage_id, dead_replica, e)
+            return False
+        except OverflowError as e:
+            # Catch overflow errors in the request payload to ensure that msgpack
+            # encoding can't kill the engine; instead, we just fail this request.
+            # The frontend should generally validate this as well, but this is needed
+            # in case we get values like seed > 2**64-1 from sampling params.
+            logger.warning(
+                "[Orchestrator] %s dispatch for req=%s hit an unserializable value on stage-%s: %s",
+                operation,
+                req_id,
+                stage_id,
+                e,
+            )
+            await self._fail_request_client_error(
+                req_id,
+                stage_id,
+                f"Request contains a value that cannot be serialized: {e}",
+            )
+            return False
 
     # ---- Shared helpers ----
 
@@ -2082,11 +2279,19 @@ class Orchestrator:
 
         prompt_token_ids = getattr(stage0_request, "prompt_token_ids", None)
         if prompt_token_ids is None:
-            logger.warning(
-                "[Orchestrator] async_chunk prewarm skipped for req=%s: stage0 prompt_token_ids missing",
+            logger.error(
+                "[Orchestrator] req=%s: async_chunk prewarm needs stage0 prompt_token_ids "
+                "and none were provided; failing the request",
                 request_id,
             )
-            return
+            await self._fail_request_client_error(
+                request_id,
+                0,
+                "async_chunk requires prompt_token_ids on the stage-0 request; "
+                "an embeds-only prompt cannot prewarm downstream stages",
+                close_duplex_sessions=True,
+            )
+            return False
 
         for next_stage_id in range(1, req_state.final_stage_id + 1):
             next_pool = self.stage_pools[next_stage_id]
