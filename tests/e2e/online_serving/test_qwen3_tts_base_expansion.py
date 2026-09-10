@@ -26,6 +26,8 @@ MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 REF_AUDIO_URL = load_test_audio_data_url("qwen3_tts/clone_2.wav")
 REF_TEXT = "Okay. Yeah. I resent you. I love you. I respect you. But you know what? You blew it! And thanks to you."
 
+DEFAULT_AUDIO_SPEECH_TIMEOUT_S = 180.0
+
 
 def get_prompt(prompt_type="text"):
     """Text prompt for text-to-audio tests (same as test_qwen3_omni - beijing test case)."""
@@ -112,3 +114,23 @@ def test_response_format_001(omni_server, openai_client) -> None:
         "ref_text": REF_TEXT,
     }
     openai_client.send_audio_speech_request(request_config)
+
+
+@hardware_test(res={"cuda": "L4"}, num_cards=1)
+@pytest.mark.parametrize("omni_server", tts_server_params, indirect=True)
+def test_inline_ref_audio_cache_ignores_openai_voice_label(omni_server, openai_client) -> None:
+    """An OpenAI voice label must not identify an inline Base voice clone."""
+    base_request = {
+        "model": omni_server.model,
+        "input": get_prompt(),
+        "stream": False,
+        "timeout": DEFAULT_AUDIO_SPEECH_TIMEOUT_S,
+        "response_format": "wav",
+        "task_type": "Base",
+        "ref_audio": REF_AUDIO_URL,
+        "ref_text": REF_TEXT,
+        "min_audio_bytes": 1,
+    }
+
+    openai_client.send_audio_speech_request({**base_request, "voice": "voice-a"})
+    openai_client.send_audio_speech_request({**base_request, "voice": "voice-b"})
