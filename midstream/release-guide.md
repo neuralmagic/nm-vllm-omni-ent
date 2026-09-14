@@ -22,8 +22,9 @@ Tracking issue: [INFERENG-10665](https://redhat.atlassian.net/browse/INFERENG-10
 3. **Upstream first.** A functional change must normally be merged in the
    appropriate upstream branch before Midstream accepts it. Any exception must
    identify its approver, reason, forward-port owner, and closure condition.
-4. **The component owner owns the change.** The engineer or SME responsible for
-   the affected functionality owns the upstream fix, backport PRs,
+4. **The component owner owns the change.** The engineer or subject-matter
+   expert responsible for the affected functionality owns the upstream fix,
+   backport PRs,
    reproduction, and technical evidence. Eligibility for a release does not
    make Midstream the implementation team.
 5. **Midstream owns the release path.** Midstream owns intake, policy
@@ -38,7 +39,7 @@ Tracking issue: [INFERENG-10665](https://redhat.atlassian.net/browse/INFERENG-10
 | Role | Responsibilities |
 |---|---|
 | Release Owner | Confirms schedule and scope, makes go/no-go decisions, approves late-change exceptions, and names a backup approver. |
-| Component engineer / SME | Owns implementation, upstream contribution, backports, reproduction, tests, risk analysis, and technical support during validation. |
+| Component engineer / subject-matter expert | Owns implementation, upstream contribution, backports, reproduction, tests, risk analysis, and technical support during validation. |
 | Midstream | Maintains the release tracker, enforces entry criteria, coordinates syncs and tags, drives Midstream builds, collects evidence, and coordinates downstream handoffs. |
 | Validation owner | Defines and executes the agreed model/API/hardware matrix and records results against the exact candidate. |
 | AIPCC / productization owner | Builds and publishes downstream wheels and images, records immutable artifact identity, and reports pipeline failures. |
@@ -58,8 +59,8 @@ path.
   dates.
 - Release type, support level, upstream vLLM and vLLM-Omni targets, and target
   downstream release branch.
-- Named Release Owner, component SMEs, validation owner, and productization
-  contacts.
+- Named Release Owner, component subject-matter experts, validation owner, and
+  productization contacts.
 
 **Midstream does**
 
@@ -78,7 +79,8 @@ path.
 
 - Proposed versions, model list, API/capability scope, hardware matrix, and
   support classification.
-- A responsible engineer/SME for every item that still requires implementation.
+- A responsible engineer or subject-matter expert for every item that still
+  requires implementation.
 - Dependencies on upstream, AIPCC, RHOAI, KServe, or other teams.
 
 **Midstream does**
@@ -97,7 +99,8 @@ path.
 
 ### 3. Upstream-ready and change cutoff
 
-Before the Midstream Tag deadline, the component engineer/SME must provide:
+Before the Midstream Tag deadline, the component engineer or subject-matter
+expert must provide:
 
 - Upstream PR and merge commit, or an approved exception explaining why
   upstream-first cannot be satisfied yet.
@@ -119,7 +122,7 @@ ownership when this evidence is missing.
 
 ### 4. Midstream sync, build, and tag
 
-**Component engineers / SMEs do**
+**Component engineers / subject-matter experts do**
 
 - Prepare and review required backports or carries.
 - Resolve conflicts and document deviations from the upstream change.
@@ -170,8 +173,8 @@ scope, including as applicable:
 - Required accelerator and multi-GPU coverage.
 - Packaging, security, and deployment-contract checks.
 
-The component SME owns diagnosis and remediation of failures in their
-functionality. Midstream coordinates reruns and release disposition.
+The component subject-matter expert owns diagnosis and remediation of failures
+in their functionality. Midstream coordinates reruns and release disposition.
 
 **Exit criteria**
 
@@ -204,7 +207,8 @@ not change this classification.
 ### Before the Midstream Tag deadline
 
 Planned changes may enter when they are within agreed scope, have an accountable
-SME, satisfy upstream-first, and include sufficient build and validation time.
+subject-matter expert, satisfy upstream-first, and include sufficient build and
+validation time.
 
 ### After the Midstream Tag deadline
 
@@ -215,10 +219,10 @@ policy. The exception must be recorded in Jira before merge.
 
 ### After a stable release ships
 
-Use the approved z-stream process. The component SME owns the upstream and
-backport changes. Jira should show whether the fix exists in every newer
-supported release before an older z-stream accepts it; unaffected versions need
-an explicit disposition.
+Use the approved z-stream process. The component subject-matter expert owns the
+upstream and backport changes. Jira should show whether the fix exists in every
+newer supported release before an older z-stream accepts it; unaffected versions
+need an explicit disposition.
 
 ## Exception record
 
@@ -227,7 +231,7 @@ Every exception must record:
 - Target release, repository, and branch.
 - Bug, feature, or CVE classification.
 - Release impact and available workaround.
-- Requester, component SME, Release Owner, and approver.
+- Requester, component subject-matter expert, Release Owner, and approver.
 - Upstream PR/commit and forward-port status.
 - Backport chain across supported releases.
 - Risk, rollback plan, and validation plan.
@@ -277,7 +281,7 @@ Best-effort scope:
 Out-of-scope items:
 Provisional items, owners, and decision dates:
 
-Component SMEs:
+Component subject-matter experts:
 Validation owner and matrix:
 Productization owner:
 Escalation contacts:
