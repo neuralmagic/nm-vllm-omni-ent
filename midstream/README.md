@@ -2,6 +2,11 @@
 
 This directory contains midstream-only content for `nm-vllm-omni-ent`. Nothing here exists in the upstream `vllm-project/vllm-omni` repository, so it is safe from upstream rebases and merges.
 
+## Release Operations
+
+See the [vLLM-Omni Release Operator Guide](release-guide.md) for release
+checkpoints, ownership, evidence, change acceptance, and escalation guidance.
+
 ## Build Pipeline
 
 Omni builds run in [nm-cicd](https://github.com/neuralmagic/nm-cicd) via `omni-pipeline.yml`:
