@@ -2,10 +2,10 @@
 
 This directory contains midstream-only content for `nm-vllm-omni-ent`. Nothing here exists in the upstream `vllm-project/vllm-omni` repository, so it is safe from upstream rebases and merges.
 
-## Release Operations
+## Release Changes
 
-See the [vLLM-Omni Release Operator Guide](release-guide.md) for release
-checkpoints, ownership, evidence, change acceptance, and escalation guidance.
+See the [vLLM-Omni Release Change Policy](release-guide.md) for release
+cutoffs, late-change exceptions, ownership, and carry tracking.
 
 ## Build Pipeline
 
