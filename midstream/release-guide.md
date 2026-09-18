@@ -42,22 +42,25 @@ before it merges. The exception must record:
 - Why the change cannot wait and the release impact if it is rejected.
 - The accountable component owner and requester.
 - The upstream PR or commit, or why upstream-first cannot be met.
-- The risk, rollback plan, and validation evidence or plan.
-- The Release Owner's approval or rejection.
+- The risk and the test plan or automated tests.
+- The Release Owner's approval or rejection, recorded in Jira.
 
-Approval and evidence belong in Jira, even when discussion happens elsewhere.
-Approval does not transfer implementation or backport ownership to Midstream.
+The exception, approval, and test information belong in Jira, even when
+discussion happens elsewhere. Approval does not transfer implementation or
+backport ownership to Midstream.
 
 ## Carries
 
 A carry is a Midstream change that deviates from the upstream release baseline.
-Carries should have a Jira issue so the deviation does not become invisible
-maintenance debt. Record:
+No net-new feature carries are accepted by default. An exception must have a
+Jira issue and Release Owner approval before it merges, regardless of release
+stage. Record:
 
 - The reason for the carry and affected release branches.
-- Its owner and related upstream PR or issue.
-- Validation evidence.
-- Its forward-port, retirement, or other closure condition.
+- The accountable component owner.
+- The related upstream PR and merge plan.
+- The bounded patch to be carried and its risk.
+- The test plan or automated tests.
 
 Carries proposed after the Midstream Tag deadline must also satisfy the
 late-change exception requirements above.
