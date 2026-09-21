@@ -71,7 +71,7 @@ def _run_vllm_ring_parity(local_rank: int, world_size: int, master_port: int) ->
             scale=softmax_scale,
         ).transpose(1, 2)
         logits = torch.matmul(query_bhsd.float(), key_bhsd.float().transpose(-2, -1)) * softmax_scale
-        lse_ref = torch.logsumexp(logits, dim=-1).transpose(1, 2)
+        lse_ref = torch.logsumexp(logits, dim=-1)
 
         torch.testing.assert_close(output, output_ref, rtol=1e-2, atol=1e-2)
         torch.testing.assert_close(lse, lse_ref, rtol=2e-3, atol=2e-3)
