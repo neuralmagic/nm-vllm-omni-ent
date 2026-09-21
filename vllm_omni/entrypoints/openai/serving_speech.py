@@ -210,6 +210,19 @@ def _validate_speaker_name(name: str) -> str:
     return trimmed
 
 
+def _validate_voice_upload_consent(consent: str) -> str:
+    """Validate the consent identifier used in uploaded voice metadata and filenames."""
+    if not consent or not consent.strip():
+        raise ValueError("consent cannot be empty or whitespace")
+    if any(c in consent for c in "/\\\x00"):
+        raise ValueError("consent must not contain path separators or NUL")
+    if len(consent) > _VOICE_UPLOAD_MAX_CONSENT_LEN:
+        raise ValueError(
+            f"consent too long ({len(consent)} chars, max {_VOICE_UPLOAD_MAX_CONSENT_LEN}). Failed to save voice."
+        )
+    return consent
+
+
 def _validate_path_within_directory(file_path: Path, directory: Path) -> bool:
     """Validate that file_path is within the specified directory.
 
@@ -882,15 +895,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
     ) -> dict:
         """Upload a new voice sample."""
         name = _validate_speaker_name(name)
-
-        if not consent or not consent.strip():
-            raise ValueError("consent cannot be empty or whitespace")
-        if any(c in consent for c in "/\\\x00"):
-            raise ValueError("consent must not contain path separators or NUL")
-        if len(consent) > _VOICE_UPLOAD_MAX_CONSENT_LEN:
-            raise ValueError(
-                f"consent too long ({len(consent)} chars, max {_VOICE_UPLOAD_MAX_CONSENT_LEN}). Failed to save voice."
-            )
+        consent = _validate_voice_upload_consent(consent)
         if ref_text is not None and len(ref_text) > _VOICE_UPLOAD_MAX_REF_TEXT_CHARS:
             raise ValueError(f"ref_text too long ({len(ref_text)} chars, max {_VOICE_UPLOAD_MAX_REF_TEXT_CHARS})")
         if speaker_description is not None and len(speaker_description) > _VOICE_UPLOAD_MAX_SPEAKER_DESC_CHARS:
@@ -1052,6 +1057,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             dict with voice information.
         """
         name = _validate_speaker_name(name)
+        consent = _validate_voice_upload_consent(consent)
         try:
             embedding = json.loads(embedding_json)
         except (json.JSONDecodeError, TypeError) as exc:
@@ -2765,14 +2771,17 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
         embedding the error inside per-item batch results.
         """
         batch_task = batch.task_type
+        available_speakers = self._get_available_speakers()
 
         def _check_voice(voice: str, task_type: str | None) -> None:
             effective_task = task_type or batch_task
             if effective_task != "CustomVoice":
                 return
             voice_lower = voice.lower()
-            if voice_lower not in self.supported_speakers and voice_lower not in self.uploaded_speakers:
-                supported = ", ".join(sorted(self.supported_speakers)) or "none"
+            if _is_default_voice(voice_lower, available_speakers):
+                return
+            if voice_lower not in available_speakers:
+                supported = ", ".join(sorted(available_speakers)) or "none"
                 raise ValueError(f"Invalid voice '{voice}'. Supported: {supported}")
 
         def _check_language(language: str) -> None:
@@ -2863,6 +2872,10 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
         batch_id = f"speech-batch-{random_uuid()}"
 
         merged_requests = [self._merge_batch_item(batch_request, item) for item in batch_request.items]
+        available_speakers = self._get_available_speakers()
+        for request in merged_requests:
+            if request.voice is not None and _is_default_voice(request.voice.lower(), available_speakers):
+                request.voice = None
 
         async def _run_item(idx: int, req: OpenAICreateSpeechRequest) -> SpeechBatchItemResult:
             has_inline_ref_audio = req.ref_audio is not None
