@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 import math
 from typing import Annotated, Any, Literal
+from urllib.parse import urlparse
 
 import numpy as np
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
@@ -462,7 +463,8 @@ _SPEECH_MAX_INSTRUCTIONS_LENGTH = 500
 _SPEECH_MAX_NEW_TOKENS_MIN = 1
 _SPEECH_MAX_NEW_TOKENS_MAX = 4096
 
-_SPEECH_REF_AUDIO_VALID_PREFIXES = ("http://", "https://", "data:", "file://")
+_SPEECH_REF_AUDIO_VALID_SCHEMES = frozenset({"http", "https", "data", "file"})
+_REF_AUDIO_FORMAT_ERROR = "ref_audio must be a URL (http/https), base64 data URL (data:...), or file URI (file://...)"
 
 
 def _validate_voice_not_empty(v: str | None) -> str | None:
@@ -486,9 +488,21 @@ def _validate_max_new_tokens_range(v: int | None) -> int | None:
     return v
 
 
+def _validate_ref_audio_format(ref_audio: str) -> str | None:
+    """Validate a reference-audio URI and return an error message, if invalid."""
+    if not isinstance(ref_audio, str):
+        return _REF_AUDIO_FORMAT_ERROR
+    scheme = (urlparse(ref_audio).scheme or "").lower()
+    if scheme not in _SPEECH_REF_AUDIO_VALID_SCHEMES:
+        return _REF_AUDIO_FORMAT_ERROR
+    return None
+
+
 def _validate_ref_audio_uri(v: str | None) -> str | None:
-    if v is not None and not v.startswith(_SPEECH_REF_AUDIO_VALID_PREFIXES):
-        raise ValueError("ref_audio must be a URL (http/https), base64 data URL (data:...), or file URI (file://...)")
+    if v is not None:
+        error = _validate_ref_audio_format(v)
+        if error:
+            raise ValueError(error)
     return v
 
 

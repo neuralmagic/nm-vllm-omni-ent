@@ -50,6 +50,9 @@ from vllm_omni.entrypoints.openai.protocol.audio import (
     SpeechInputTokenDetails,
     SpeechTokenUsage,
 )
+from vllm_omni.entrypoints.openai.protocol.audio import (
+    _validate_ref_audio_format as _validate_ref_audio_uri_format,
+)
 from vllm_omni.entrypoints.openai.speech_usage import (
     SpeechOutputTokenCounter,
     build_speech_usage,
@@ -1195,12 +1198,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
 
     def _validate_ref_audio_format(self, ref_audio: str | list[str] | None) -> str | None:
         """Validate ref_audio is a supported URI format. Returns error or None."""
-        if not isinstance(ref_audio, str):
-            return "ref_audio must be a URL (http/https), base64 data URL (data:...), or file URI (file://...)"
-        scheme = (urlparse(ref_audio).scheme or "").lower()
-        if scheme not in {"http", "https", "data", "file"}:
-            return "ref_audio must be a URL (http/https), base64 data URL (data:...), or file URI (file://...)"
-        return None
+        return _validate_ref_audio_uri_format(ref_audio)
 
     @staticmethod
     def _local_ref_audio_stat_path(ref_audio_str: str) -> str | None:
