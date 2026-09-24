@@ -35,7 +35,7 @@ No placeholder run ID was invented.
 | PII redaction in TTS/audio logs (PR #43) | Dropped. | Upstream commit `07ceb332` is in the selected tag (upstream #6329). |
 | OmniVoice ASR/instruction/long-form patch series | Do not replay wholesale. | v0.30.0rc1 contains upstream OmniVoice evolution; upstream PR #5784 remains open, so compare the release-required scenarios rather than assume exact parity. |
 | Validation hardening, DoS overflow, Qwen3-TTS Base voice-label, and speech-CI patches | Not reapplied. | These require targeted acceptance tests before any one is restored; none is silently retained by this mockup. |
-| `fa3-fwd` removal (INFERENG-9470) | **Unresolved; not claimed as dropped.** | The selected upstream tag still pins `fa3-fwd==0.0.3`.  Current downstream `main` has a later removal commit.  Decide from the selected-version build whether to reapply the removal as the separately-owned provisional carry. |
+| `fa3-fwd` removal (INFERENG-9470) | **Retained as a valid carry.** | The selected upstream tag still pins `fa3-fwd==0.0.3`; this branch reapplies the proven removal commit and its FA3 fallback/ring-attention compatibility changes. |
 
 ## Shape of the fresh-slate delta
 
@@ -51,5 +51,5 @@ not meaningful as a carry count.
 2. Build and inspect the Omni wheel to prove package-data contents (INFERENG-10371).
 3. Run the required Realtime, OmniVoice, TTS, and audio validation cases against
    this image; only then reapply a narrowly-owned failed behavior.
-4. Determine whether the selected build needs the INFERENG-9470 `fa3-fwd`
-   removal carry, and record the owner/removal condition if it does.
+4. Build and test the retained INFERENG-9470 `fa3-fwd` removal carry against
+   the selected version, including its ring-attention compatibility coverage.
