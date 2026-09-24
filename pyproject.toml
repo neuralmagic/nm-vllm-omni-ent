@@ -164,7 +164,9 @@ where = ["."]
 include = ["vllm_omni*"]
 
 [tool.setuptools.package-data]
-"vllm_omni" = ["_version.py", "py.typed", "transformers_utils/chat_templates/*.jinja"]
+# Midstream carry for INFERENG-10371: deploy YAMLs and other runtime assets
+# must be present in the built wheel until the upstream packaging fix lands.
+"vllm_omni" = ["**/*"]
 
 [tool.setuptools_scm]
 # no extra settings needed, presence enables setuptools-scm
