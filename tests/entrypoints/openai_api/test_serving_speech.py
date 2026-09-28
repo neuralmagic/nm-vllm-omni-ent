@@ -4415,7 +4415,7 @@ def test_api_server_create_speech_batch_omits_null_fields(mocker: MockerFixture)
                         input_token_details=SpeechInputTokenDetails(text_tokens=18, audio_tokens=101),
                     ),
                 ),
-                SpeechBatchItemResult(index=1, status="error", error="Input text cannot be empty"),
+                SpeechBatchItemResult(index=1, status="error", error="Simulated item failure"),
             ],
             total=2,
             succeeded=1,
@@ -4423,7 +4423,9 @@ def test_api_server_create_speech_batch_omits_null_fields(mocker: MockerFixture)
         )
     )
     raw_request = _make_api_server_request(handler, path="/v1/audio/speech/batch")
-    request = BatchSpeechRequest(items=[SpeechBatchItem(input="hi"), SpeechBatchItem(input="")])
+    # Both requests must be valid: this test pins the mocked response shape,
+    # not request validation behavior.
+    request = BatchSpeechRequest(items=[SpeechBatchItem(input="hi"), SpeechBatchItem(input="bye")])
 
     response = asyncio.run(api_server_module.create_speech_batch(request, raw_request))
 
@@ -4439,7 +4441,7 @@ def test_api_server_create_speech_batch_omits_null_fields(mocker: MockerFixture)
     assert "usage" not in errored
     assert "audio_data" not in errored
     assert "media_type" not in errored
-    assert errored["error"] == "Input text cannot be empty"
+    assert errored["error"] == "Simulated item failure"
 
 
 def test_api_server_create_audio_generate_without_handler_returns_404():
