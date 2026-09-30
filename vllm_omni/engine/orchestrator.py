@@ -704,8 +704,21 @@ class OrchestratorBase:
         results: list[Any] = []
         stage_ids: list[int] = []
         for pool in target_pools:
+            clear_sender = pool.stage_type != "diffusion" and (
+                method in ("reset_mm_cache", "sleep")
+                or (method == "pause_scheduler" and kwargs.get("clear_cache", args[1] if len(args) > 1 else True))
+            )
             for replica_id in pool.live_replica_ids():
                 try:
+                    if clear_sender:
+                        processor = self._stage_input_processors.get(pool.stage_id)
+                        if processor is not None:
+                            clear = processor.renderer.clear_mm_cache_async()
+                            if timeout is None:
+                                await clear
+                            else:
+                                await asyncio.wait_for(clear, timeout=timeout)
+                        clear_sender = False
                     stage_result = await pool.collective_rpc(
                         replica_id=replica_id,
                         method=method,
@@ -714,13 +727,14 @@ class OrchestratorBase:
                         kwargs=kwargs,
                     )
                 except Exception as exc:
-                    if method not in ("pause_scheduler", "resume_scheduler"):
+                    if (
+                        method not in ("pause_scheduler", "resume_scheduler")
+                        and method not in StagePool._CACHE_RESET_METHODS
+                    ):
                         raise
-                    # A pause or resume that fails on one replica leaves the
-                    # engine usable, so report it as this replica's result
-                    # rather than out of the request handler; the caller
-                    # reaches both through _engine_core_rpc, which raises on
-                    # the error result and can then retry or resume.
+                    # Administrative failures must reach the caller without
+                    # terminating unrelated stages. _engine_core_rpc raises
+                    # on this result; remaining replicas still receive the RPC.
                     stage_result = {"supported": False, "error": f"{type(exc).__name__}: {exc}"}
                 stage_ids.append(pool.stage_id)
                 results.append(stage_result)
@@ -788,6 +802,18 @@ class OrchestratorBase:
                 )
             req_state = self.request_states.get(getattr(eco, "request_id", None))
             if req_state is None:
+                continue
+            if (
+                getattr(eco, "finish_reason", None) == FinishReason.ERROR
+                and not getattr(eco, "is_segment_finished", False)
+                and not req_state.session_owned
+            ):
+                reason = getattr(eco, "stop_reason", None)
+                await self._handle_stage_error(
+                    stage_id,
+                    eco,
+                    error=reason if isinstance(reason, str) and reason else "Stage request failed",
+                )
                 continue
             if req_state.streaming.enabled:
                 segment_finished = bool(getattr(eco, "is_segment_finished", False))
@@ -1200,7 +1226,7 @@ class OrchestratorBase:
 
             await self._route_output(stage_id, replica_id, output, req_state, stage_metrics)
 
-    async def _handle_stage_error(self, stage_id: int, output: Any) -> None:
+    async def _handle_stage_error(self, stage_id: int, output: Any, *, error: str | None = None) -> None:
         """Emit a frontend-visible error and clean up request state."""
         if self._cfg_tracker.is_companion(output.request_id):
             parent_id = self._cfg_tracker.get_parent_id(output.request_id) or output.request_id
@@ -1210,7 +1236,7 @@ class OrchestratorBase:
             ErrorMessage(
                 request_id=parent_id,
                 stage_id=stage_id,
-                error=output.error,
+                error=error if error is not None else output.error,
                 status_code=getattr(output, "error_status_code", None),
                 error_type=getattr(output, "error_type", None),
             )
@@ -2258,20 +2284,20 @@ class OrchestratorBase:
             else:
                 diffusion_prompt = req_state.prompt
 
+            submit_kwargs = self._diffusion_submit_kwargs(req_id, src_stage_id, next_client, req_state, output)
+            payload_sender_info = self._build_payload_sender_info(src_stage_id, request_id=req_id)
+            if payload_sender_info is not None:
+                submit_kwargs["payload_sender_info"] = payload_sender_info
             if already_submitted:
-                replica_id = await next_pool.submit_update(req_id, req_state, diffusion_prompt)
+                replica_id = await next_pool.submit_update(
+                    req_id, req_state, diffusion_prompt, submit_kwargs=submit_kwargs
+                )
             else:
                 replica_id = await next_pool.submit_initial(
                     req_id,
                     req_state,
                     diffusion_prompt,
-                    submit_kwargs=self._diffusion_submit_kwargs(
-                        req_id,
-                        src_stage_id,
-                        next_client,
-                        req_state,
-                        output,
-                    ),
+                    submit_kwargs=submit_kwargs,
                     params_override=self._maybe_clone_diffusion_params_for_cfg(req_id, params),
                 )
             self._on_stage_submitted(

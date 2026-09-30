@@ -32,11 +32,13 @@ from vllm_omni.engine.duplex.contracts import (
     DuplexOutputAction,
     DuplexOutputDecision,
 )
+from vllm_omni.engine.duplex.intermediate import build_duplex_append_prompt
 from vllm_omni.engine.duplex.plugin import (
     DuplexModelPlugin,
     DuplexRuntimeConfigError,
     EncodeAudio,
     reject_changed_runtime_value,
+    reject_private_runtime_keys,
 )
 from vllm_omni.model_executor.models.minicpmo_4_5.duplex.capabilities import (
     minicpmo45_native_capabilities,
@@ -269,29 +271,18 @@ def build_duplex_data_plane_prompt(
         and payload.get("force_listen") is not True
     ):
         payload = {**payload, "force_listen": True}
-    return {
-        "prompt_token_ids": [token_id] * token_budget,
-        "model_intermediate_buffer": {
-            "request_id": request_id,
-            "global_request_id": [fence.session_id],
-            "duplex": {
-                "fence": fence,
-                "session_id": fence.session_id,
-                "epoch": fence.epoch,
-                "seq": seq,
-                "turn_id": fence.turn_id,
-                "turn_seq": turn_seq,
-                "mode": "append_audio_chunk",
-                "payload": payload,
-                "final": final,
-                "data_plane": True,
-                "session_config": dict(session_config),
-                "runtime_config": dict(runtime_config),
-                "scheduler_token_budget": token_budget,
-                "scheduler_token_id": token_id,
-            },
-        },
-    }
+    return build_duplex_append_prompt(
+        request_id=request_id,
+        fence=fence,
+        session_config=session_config,
+        runtime_config=runtime_config,
+        seq=seq,
+        turn_seq=turn_seq,
+        payload=payload,
+        final=final,
+        prompt_token_ids=[token_id] * token_budget,
+        model_fields={"scheduler_token_id": token_id},
+    )
 
 
 # ---- engine policy helpers: listen decision ----
@@ -435,11 +426,14 @@ def _stage0_stop_token_ids(tokenizer: PreTrainedTokenizerBase | None) -> list[in
     if tokenizer is None:
         return []
     out: list[int] = []
+    # ``turn_eos`` is deliberately not a stop token: the official Talker
+    # conditions on the hidden state produced *after* ``<|turn_eos|>`` is fed,
+    # so Stage 0 must forward it once and stop on the unit terminator that the
+    # policy forces on the following step.
     stop_token_fields = (
         "chunk_eos_token_id",
         "chunk_tts_eos_token_id",
         "listen_token_id",
-        "turn_eos_token_id",
     )
     for field in stop_token_fields:
         token = MiniCPMO45DuplexPolicy.SPECIAL_TOKEN_FIELDS[field]
@@ -722,13 +716,12 @@ class MiniCPMO45DuplexPlugin(DuplexModelPlugin):
         return minicpmo45_native_capabilities(max_sessions=max_sessions)
 
     def validate_client_extra_body(self, extra_body: object) -> None:
-        if not isinstance(extra_body, dict):
-            return
-        private_keys = sorted(PRIVATE_RUNTIME_CONFIG_KEYS.intersection(extra_body))
-        if private_keys:
-            raise MiniCPMO45ClientRuntimeConfigError(
-                "duplex runtime configuration is server-owned: " + ", ".join(private_keys)
-            )
+        reject_private_runtime_keys(
+            extra_body,
+            self.private_runtime_config_keys,
+            message="duplex runtime configuration is server-owned: ",
+            error_cls=MiniCPMO45ClientRuntimeConfigError,
+        )
 
     async def prepare_runtime_config(
         self, config: DuplexSessionConfig, *, model_config: ModelConfig | None
