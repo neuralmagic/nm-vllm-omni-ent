@@ -8,11 +8,9 @@ history stays honest, and a dropped connection can resume the same session.
 This page covers how to run a duplex deployment, how to drive it from Python
 with `vllm_omni.clients.duplex.DuplexClient`, and the complete wire contract.
 
-The endpoint is served for models that ship a duplex plugin — including
-MiniCPM-o 4.5 and Qwen3-Omni — and just for deploy configurations that declare
-`session_mode: duplex`. PersonaPlex and Nemotron VoiceChat are ported to the
-plugin contract in follow-up PRs and are not served over this endpoint yet. The runtime architecture
-is described in [Full-Duplex Runtime (MiniCPM-o 4.5)](../design/fullduplex.md).
+The endpoint requires a duplex plugin and a deployment with `session_mode: duplex`.
+See [supported models and deployments](full_duplex_api.md#enable-full-duplex)
+and the [runtime architecture](../design/fullduplex.md).
 
 ## Qwen3-Omni conversation history
 
@@ -1340,9 +1338,6 @@ them out into typed events before they reach a client.
 
 ## Known Limitations
 
-- Only MiniCPM-o 4.5 is served over this endpoint today; PersonaPlex and
-  Nemotron VoiceChat arrive with the follow-up PRs that port them to the
-  plugin contract.
 - Several surfaces are capability-gated per model (see *Capability
   negotiation by model* above): PersonaPlex does not support session resume,
   barge-in, or audio truncation; Nemotron VoiceChat does not support barge-in

@@ -569,6 +569,12 @@ class ModelChannel:
                 ):
                     return
         engine_output = self._build_stage_output(item)
+        runtime_config = self._ctx.plugin.runtime_config_after_model_output(
+            dict(session.runtime_config),
+            item.context.segment_output_metadata,
+        )
+        if runtime_config is not None:
+            session.replace_runtime_config(runtime_config)
         drain_result = {"data_plane_outputs": [engine_output]}
         close_reason, emitted_response = await self._send_model_output_events(
             drain_result, expected_epoch=expected_epoch

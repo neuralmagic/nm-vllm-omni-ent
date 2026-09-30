@@ -58,6 +58,8 @@ class Qwen3TTSCode2Wav(nn.Module):
     via the SpeechTokenizer decoder directly (bypassing HF wrapper overhead)."""
 
     input_modalities = "audio"
+    tokenizer_subfolder = "speech_tokenizer"
+    decoder_cudagraph_modes: tuple[str, ...] = ("icl", "xvec")
 
     # Ask the model runner for the scheduler-side request IDs. Stateful
     # decoder caches must use the same IDs delivered by on_requests_finished;
@@ -105,7 +107,7 @@ class Qwen3TTSCode2Wav(nn.Module):
         # load_weights().
         tok_config = Qwen3TTSTokenizerV2Config.from_pretrained(
             self.model_path,
-            subfolder="speech_tokenizer",
+            subfolder=self.tokenizer_subfolder,
         )
         dec_config = tok_config.decoder_config
         self.decoder = Qwen3TTSTokenizerV2Decoder._from_config(dec_config)
@@ -194,6 +196,7 @@ class Qwen3TTSCode2Wav(nn.Module):
             )
 
         self.decoder.enable_cudagraph(
+            capture_modes=self.decoder_cudagraph_modes,
             capture_batch_sizes=decode_cudagraph_batch_sizes,
             stateless_capture_sizes=decode_cudagraph_capture_sizes,
             device=device,
@@ -257,6 +260,7 @@ class Qwen3TTSCode2Wav(nn.Module):
         intermediate_tensors: Any = None,
         inputs_embeds: torch.Tensor | None = None,
         runtime_additional_information: list[dict[str, Any]] | None = None,
+        model_intermediate_buffer: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> OmniOutput:
         """Decode codec codes into audio waveform.
@@ -282,6 +286,13 @@ class Qwen3TTSCode2Wav(nn.Module):
                 multimodal_outputs={"model_outputs": [empty], "sr": [sr_tensor]},
             )
 
+        # vLLM's runner renamed this per-request side channel to
+        # ``model_intermediate_buffer``.  Keep accepting the old explicit
+        # argument for older runners, and use the new name when it is empty.
+        # Without this fallback, the non-async-chunk/full-payload path decodes
+        # placeholder input_ids instead of the codec payload from Stage 0.
+        if not runtime_additional_information:
+            runtime_additional_information = model_intermediate_buffer
         runtime_infos = runtime_additional_information or []
         ids = input_ids.reshape(-1).to(dtype=torch.long)
         request_ids_list = self._split_request_ids(ids, kwargs.get("seq_token_counts"))
@@ -566,7 +577,7 @@ class Qwen3TTSCode2Wav(nn.Module):
         source = DefaultModelLoader.Source(
             model_or_path=self.model_path,
             revision=self.vllm_config.model_config.revision,
-            subfolder="speech_tokenizer",
+            subfolder=self.tokenizer_subfolder,
         )
         subfolder_weights = model_loader._get_weights_iterator(source)
         loaded = AutoWeightsLoader(self).load_weights(
