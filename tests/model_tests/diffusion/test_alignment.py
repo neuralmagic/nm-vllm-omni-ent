@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """
 Tests for alignment between _DIFFUSION_MODELS and DIFFUSION_TEST_SETTINGS; if
 tests in this file are failing, you are probably adding a new model, and need
@@ -21,32 +24,38 @@ pytestmark = [pytest.mark.diffusion, pytest.mark.cpu, pytest.mark.core_model]
 # if you are adding a new model and see the tests below fail, please follow the pattern
 # for adding a new tiny model builder and corresponding entry in DIFFUSION_TEST_SETTINGS.
 EXCLUDED_MODELS = [
-    "QwenImageEditPipeline",
-    "QwenImageEditPlusPipeline",
     "QwenImageLayeredPipeline",
     "GlmImagePipeline",
     "ZImagePipeline",
     "OvisImagePipeline",
+    # Requires upstream AR hidden states and token boundaries; covered by
+    # dedicated MammothModa2 bridge/pipeline tests and real-checkpoint E2E.
+    "MammothModa2DiTPipeline",
     "WanPipeline",
+    "WanDMDPipeline",
     "WanVACEPipeline",
+    "LTX2TwoStagePipeline",
+    "LTX2DistilledOneStagePipeline",
+    "LTX2DistilledTwoStagePipeline",
     "LTX2DistilledPipeline",
     "LTX2T2VDMD2Pipeline",
     "LTX2I2VDMD2Pipeline",
     "MiniMaxH3Pipeline",
+    "MiniMaxH3ModularPipeline",
     "StableAudioPipeline",
     "WanImageToVideoPipeline",
     "WanS2VPipeline",
     "WanT2VDMD2Pipeline",
     "WanI2VDMD2Pipeline",
-    "LongCatImagePipeline",
+    "LongCatVideoAvatarPipeline",
     "BagelPipeline",
     "BooguImagePipeline",
+    "BooguImageTurboPipeline",
     "LancePipeline",
     "MingImagePipeline",
+    "MingImageDiffusionPipeline",
+    "MingImageLayeredDiffusionPipeline",
     "InternVLAA1Pipeline",
-    "LongCatImageEditPipeline",
-    "StableDiffusion3Pipeline",
-    "FluxKontextPipeline",
     "HunyuanImage3ForCausalMM",
     "ErnieImagePipeline",
     "NextStep11Pipeline",
@@ -56,24 +65,33 @@ EXCLUDED_MODELS = [
     "OmniGen2Pipeline",
     "HeliosPipeline",
     "HeliosPyramidPipeline",
-    "DreamIDOmniPipeline",
     "SenseNovaU1Pipeline",
-    "AudioXPipeline",
     "HunyuanVideo15Pipeline",
     "HunyuanVideo15ImageToVideoPipeline",
     "LingBotVideoPipeline",
-    "MagiHumanPipeline",
+    # Requires camera/action assets and persistent AR state; covered by its
+    # dedicated contract tests and real-checkpoint E2E smoke instead.
+    "LingBotWorldCausalDMDPipeline",
+    # The 270+ GiB multimodal checkpoint needs 4/8-way native sequence/head
+    # parallel execution; covered by focused native contract and GPU tests.
+    "Magi2Pipeline",
     "OmniVoicePipeline",
     "OmniVoice",
     "Cosmos3OmniDiffusersPipeline",
     "Cosmos3OmniPipeline",
     "DiffusersAdapterPipeline",
     "HiDreamImagePipeline",
+    "HiDreamO1ImagePipeline",
     "DreamZeroPipeline",
     "StableDiffusionXLPipeline",
     "Gr00tN1d7Pipeline",
-    "SoulXSingerPipeline",
-    "SoulXSingerSVCPipeline",
+    "Pi0Pipeline",
+    "Pi05Pipeline",
+    "SanaWmPipeline",
+    # Audio pipeline conditioned by a separate Qwen2.5-Omni encoder stage;
+    # covered by tests/diffusion/models/auk (CPU pipeline tests, parity) and
+    # the real-checkpoint E2E test instead of a tiny model.
+    "AuKPipeline",
 ]
 
 

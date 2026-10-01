@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
 """
 L4 expansion coverage for ``robbyant/lingbot-video-dense-1.3b``.
 
-This file remains dense-only. Basic single-GPU MoE serving is covered by
-``test_lingbot_video_moe.py``; T2I, I2V, TI2V, and multi-GPU feature rows
-belong in follow-up PRs.
+This file remains dense-only. Baseline T2I/T2V/TI2V for the dense checkpoint
+lives in ``test_lingbot_video.py`` (L2/L3). MoE smoke stays in
+``test_lingbot_video_moe.py`` (L4). Distributed feature rows belong in follow-up
+PRs.
 """
 
 import json
@@ -25,7 +26,7 @@ MODEL = "robbyant/lingbot-video-dense-1.3b"
 PROMPT = "a robotic arm picks up a red block"
 NEGATIVE_PROMPT = "low quality, blurry, watermark, text"
 
-SINGLE_CARD_FEATURE_MARKS = hardware_marks(res={"cuda": "H100"})
+SINGLE_CARD_FEATURE_MARKS = hardware_marks(res={"cuda": ["H100", "B200"]})
 
 
 def _get_diffusion_feature_cases(model: str):
