@@ -60,6 +60,38 @@ def make_text_omni_output(
     )
 
 
+def make_audio_omni_output(
+    request_id: str = "test-req",
+    index: int = 0,
+    num_prompt_tokens: int = 3,
+) -> OmniRequestOutput:
+    """Build an OmniRequestOutput wrapping an audio RequestOutput."""
+    res = RequestOutput(
+        request_id=request_id,
+        prompt="test",
+        prompt_token_ids=list(range(num_prompt_tokens)),
+        prompt_logprobs=None,
+        outputs=[
+            CompletionOutput(
+                index=index,
+                text="",
+                token_ids=[],
+                cumulative_logprob=0.0,
+                logprobs=None,
+                finish_reason="stop",
+                stop_reason=None,
+            )
+        ],
+        finished=True,
+    )
+    return OmniRequestOutput.from_stage_output(
+        res,
+        request_id=request_id,
+        final_output_type="audio",
+        finished=True,
+    )
+
+
 def mock_audio_choices(index: int = 0, role: str = "assistant"):
     return [
         ChatCompletionResponseStreamChoice(
