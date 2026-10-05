@@ -25,13 +25,11 @@ MODEL = "k2-fsa/OmniVoice"
 DEPLOY_CONFIG = get_deploy_config_path("omnivoice.yaml")
 _OMNIVOICE_REF_AUDIO_SEED = 102
 
-# OmniRunner tuple: model, legacy stage config path, extra Omni kwargs.
-# The migrated test passes deploy_config through extra Omni kwargs.
+# OmniRunner tuple: model, deploy config path, extra Omni kwargs.
 _OMNI_RUNNER_PARAM = (
     MODEL,
-    None,
+    DEPLOY_CONFIG,
     {
-        "deploy_config": DEPLOY_CONFIG,
         "trust_remote_code": True,
         "log_stats": True,
     },
@@ -63,7 +61,7 @@ def test_omnivoice_text_to_audio(omni_runner: OmniRunner) -> None:
 
     # Check final output has audio
     final_output = outputs[-1]
-    ro = final_output.request_output
+    ro = final_output
     assert ro is not None, "No request_output"
 
     mm = getattr(ro, "multimodal_output", None)

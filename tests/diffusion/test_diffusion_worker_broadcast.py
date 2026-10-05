@@ -60,6 +60,17 @@ class _RecordingWorker:
         self.calls.append(args[0])
 
 
+def test_recv_message_waits_indefinitely():
+    worker_proc = WorkerProc.__new__(WorkerProc)
+    worker_proc.mq = Mock()
+    worker_proc.mq.dequeue.return_value = {"type": "rpc"}
+
+    result = worker_proc.recv_message()
+
+    assert result == {"type": "rpc"}
+    worker_proc.mq.dequeue.assert_called_once_with(indefinite=True)
+
+
 def test_busy_loop_releases_failed_rpc_traceback_and_device_cache(monkeypatch):
     original = RuntimeError("model execution failed")
     worker_proc = WorkerProc.__new__(WorkerProc)

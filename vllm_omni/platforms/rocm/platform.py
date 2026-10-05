@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 
 import torch
 from vllm import envs
@@ -102,6 +102,7 @@ class RocmOmniPlatform(OmniPlatform, RocmPlatform):
 
         if selected_backend is not None:
             backend_upper = selected_backend.upper()
+            cls.validate_diffusion_attn_backend(backend_upper)
             if backend_upper in ("FLASH_ATTN_HUB", "FLASH_ATTN_3_HUB"):
                 logger.warning(
                     "HuggingFace kernels-backed FlashAttention is "
@@ -180,11 +181,16 @@ class RocmOmniPlatform(OmniPlatform, RocmPlatform):
         return free, total
 
     @classmethod
+    def memory_reserved(cls, device: torch.device | int | None = None) -> int:
+        return int(torch.cuda.memory_reserved(device))
+
+    @classmethod
     def set_device_control_env_var(cls, devices: str | int | None) -> None:
         import os
 
-        os.environ["HIP_VISIBLE_DEVICES"] = devices
-        os.environ["CUDA_VISIBLE_DEVICES"] = devices
+        visible = "" if devices is None else str(devices)
+        os.environ["HIP_VISIBLE_DEVICES"] = visible
+        os.environ["CUDA_VISIBLE_DEVICES"] = visible
 
     @classmethod
     def unset_device_control_env_var(cls) -> None:
@@ -217,4 +223,12 @@ class RocmOmniPlatform(OmniPlatform, RocmPlatform):
         else:
             rms_norm = default
 
-        return IrOpPriorityConfig.with_default(default, rms_norm=rms_norm, fused_add_rms_norm=rms_norm)
+        # Mirrors upstream RocmPlatform defaults: `gelu_and_mul_sparse` has no
+        # ROCm-specific provider, so it must not fall back to `default` (which
+        # contains `vllm_c`) via IrOpPriorityConfig.with_default.
+        return IrOpPriorityConfig.with_default(
+            default,
+            rms_norm=rms_norm,
+            fused_add_rms_norm=rms_norm,
+            gelu_and_mul_sparse=["native"],
+        )

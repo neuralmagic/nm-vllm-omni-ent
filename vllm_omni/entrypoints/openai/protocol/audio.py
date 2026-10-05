@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 import math
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import numpy as np
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
@@ -15,6 +15,7 @@ _MAX_EMBEDDING_DIM = 8192
 SUPPORTED_AUDIO_FORMATS: frozenset[str] = frozenset({"wav", "pcm", "flac", "mp3", "opus"})
 SUPPORTED_CHAT_AUDIO_FORMATS: frozenset[str] = SUPPORTED_AUDIO_FORMATS | {"pcm16"}
 DEFAULT_AUDIO_FORMAT: str = "wav"
+SpeechSampleRate = Annotated[int, Field(gt=0)]
 
 
 def _normalize_ref_audio_value(value):
@@ -80,6 +81,10 @@ class OpenAICreateSpeechRequest(BaseModel):
         description="Instructions for voice style/emotion (maps to 'instruct' for Qwen3-TTS)",
     )
     response_format: Literal["wav", "pcm", "flac", "mp3", "opus"] = DEFAULT_AUDIO_FORMAT
+    sample_rate: SpeechSampleRate | None = Field(
+        default=None,
+        description="Target sample rate of the returned audio. If omitted, use the model's native sample rate.",
+    )
     speed: float | None = Field(
         default=1.0,
         ge=0.25,
@@ -98,7 +103,8 @@ class OpenAICreateSpeechRequest(BaseModel):
         description=(
             "Streaming switch; defaults to OpenAI speech.audio.* SSE events. "
             "Set stream_format='audio' to opt into raw pcm/wav byte streaming. "
-            "Requires response_format='pcm' or 'wav'. Speed adjustment is not supported when streaming."
+            "HTTP streaming requires response_format='pcm' or 'wav'. "
+            "Models with native speed control may accept speed adjustment over HTTP."
         ),
     )
 
@@ -179,19 +185,14 @@ class OpenAICreateSpeechRequest(BaseModel):
     word_timestamps: bool = Field(
         default=False,
         description=(
-            "When true, the server runs a shared forced aligner alongside the streamed "
-            "audio and emits per-chunk word timestamps. Requires the server to be "
-            "launched with --forced-aligner pointing at an aligner model. No effect "
-            "when streaming is off."
+            "When true, non-streaming responses carry per-word timestamps in the "
+            "X-Word-Timestamps header (JSON list of {word, start_ms, end_ms}, "
+            "ASCII-escaped; replaced by X-Word-Timestamps-Omitted past 4 KB). "
+            "Requires the server to be launched with --forced-aligner (400 otherwise). "
+            "Not supported with stream=true; for streaming use the WebSocket "
+            "/v1/audio/speech/stream path."
         ),
     )
-
-    @field_validator("voice")
-    @classmethod
-    def validate_voice_not_empty(cls, v: str | None) -> str | None:
-        if v is not None and not v.strip():
-            raise ValueError("Invalid voice: voice cannot be empty or whitespace")
-        return v
 
     @field_validator("stream_format")
     @classmethod
@@ -343,8 +344,6 @@ class OpenAICreateSpeechRequest(BaseModel):
                 )
             if self.speed is None:
                 self.speed = 1.0
-            elif self.speed != 1.0:
-                raise ValueError("Speed adjustment is not supported when streaming. Set speed=1.0 or omit it.")
         return self
 
 
@@ -385,14 +384,14 @@ class OpenAICreateAudioGenerateRequest(BaseModel):
     )
     guidance_scale: float | None = Field(
         default=None,
-        gt=0,
+        ge=0,
         le=1000,
         description="Guidance scale for diffusion models",
     )
     num_inference_steps: int | None = Field(
         default=None,
         ge=1,
-        le=_INT64_MAX,
+        le=1000,
         description="Number of inference steps",
     )
     seed: int | None = Field(
@@ -413,6 +412,7 @@ class OpenAICreateAudioGenerateRequest(BaseModel):
 class CreateAudio(BaseModel):
     audio_tensor: np.ndarray
     sample_rate: int = 24000
+    output_sample_rate: int | None = None
     response_format: str = "wav"
     speed: float = 1.0
     base64_encode: bool = True
@@ -421,46 +421,26 @@ class CreateAudio(BaseModel):
         arbitrary_types_allowed = True
 
 
+class AudioChunkMetadata(BaseModel):
+    """Waveform dimensions after transforms, before encoding.
+
+    Frames count samples per channel, not interleaved scalar samples or bytes.
+    For compressed formats this excludes any padding introduced by the codec.
+    """
+
+    format: str = Field(min_length=1, strict=True)
+    sample_rate_hz: int = Field(gt=0, strict=True)
+    frame_count: int = Field(ge=0, strict=True)
+    channels: int = Field(gt=0, strict=True)
+
+
 class AudioResponse(BaseModel):
     audio_data: bytes | str
     media_type: str
+    audio_metadata: AudioChunkMetadata | None = None
 
 
 # --- Batch Speech Models ---
-
-
-_SPEECH_MAX_INSTRUCTIONS_LENGTH = 500
-_SPEECH_MAX_NEW_TOKENS_MIN = 1
-_SPEECH_MAX_NEW_TOKENS_MAX = 4096
-
-_SPEECH_REF_AUDIO_VALID_PREFIXES = ("http://", "https://", "data:", "file://")
-
-
-def _validate_voice_not_empty(v: str | None) -> str | None:
-    if v is not None and not v.strip():
-        raise ValueError("Invalid voice: voice cannot be empty or whitespace")
-    return v
-
-
-def _validate_instructions_length(v: str | None) -> str | None:
-    if v is not None and len(v) > _SPEECH_MAX_INSTRUCTIONS_LENGTH:
-        raise ValueError(f"Instructions too long (max {_SPEECH_MAX_INSTRUCTIONS_LENGTH} characters)")
-    return v
-
-
-def _validate_max_new_tokens_range(v: int | None) -> int | None:
-    if v is not None:
-        if v < _SPEECH_MAX_NEW_TOKENS_MIN:
-            raise ValueError(f"max_new_tokens must be at least {_SPEECH_MAX_NEW_TOKENS_MIN}")
-        if v > _SPEECH_MAX_NEW_TOKENS_MAX:
-            raise ValueError(f"max_new_tokens cannot exceed {_SPEECH_MAX_NEW_TOKENS_MAX}")
-    return v
-
-
-def _validate_ref_audio_uri(v: str | None) -> str | None:
-    if v is not None and not v.startswith(_SPEECH_REF_AUDIO_VALID_PREFIXES):
-        raise ValueError("ref_audio must be a URL (http/https), base64 data URL (data:...), or file URI (file://...)")
-    return v
 
 
 class SpeechBatchItem(BaseModel):
@@ -471,6 +451,7 @@ class SpeechBatchItem(BaseModel):
     voice: str | None = Field(default=None, validation_alias=AliasChoices("voice", "speaker"))
     instructions: str | None = None
     response_format: Literal["wav", "pcm", "flac", "mp3", "opus"] | None = None
+    sample_rate: SpeechSampleRate | None = None
     speed: float | None = Field(default=None, ge=0.25, le=4.0)
     task_type: Literal["CustomVoice", "VoiceDesign", "Base"] | None = None
     language: str | None = None
@@ -480,26 +461,6 @@ class SpeechBatchItem(BaseModel):
     max_new_tokens: int | None = Field(default=None, ge=1, le=_INT64_MAX)
     initial_codec_chunk_frames: int | None = Field(default=None, ge=0, le=_INT64_MAX)
     non_streaming_mode: bool | None = None
-
-    @field_validator("voice")
-    @classmethod
-    def validate_voice(cls, v: str | None) -> str | None:
-        return _validate_voice_not_empty(v)
-
-    @field_validator("instructions")
-    @classmethod
-    def validate_instructions(cls, v: str | None) -> str | None:
-        return _validate_instructions_length(v)
-
-    @field_validator("max_new_tokens")
-    @classmethod
-    def validate_max_new_tokens(cls, v: int | None) -> int | None:
-        return _validate_max_new_tokens_range(v)
-
-    @field_validator("ref_audio")
-    @classmethod
-    def validate_ref_audio(cls, v: str | None) -> str | None:
-        return _validate_ref_audio_uri(v)
 
 
 class BatchSpeechRequest(BaseModel):
@@ -511,6 +472,7 @@ class BatchSpeechRequest(BaseModel):
     voice: str | None = Field(default=None, validation_alias=AliasChoices("voice", "speaker"))
     instructions: str | None = None
     response_format: Literal["wav", "pcm", "flac", "mp3", "opus"] = DEFAULT_AUDIO_FORMAT
+    sample_rate: SpeechSampleRate | None = None
     speed: float | None = Field(default=1.0, ge=0.25, le=4.0)
     task_type: Literal["CustomVoice", "VoiceDesign", "Base"] | None = None
     language: str | None = None
@@ -520,26 +482,6 @@ class BatchSpeechRequest(BaseModel):
     max_new_tokens: int | None = Field(default=None, ge=1, le=_INT64_MAX)
     initial_codec_chunk_frames: int | None = Field(default=None, ge=0, le=_INT64_MAX)
     non_streaming_mode: bool | None = None
-
-    @field_validator("voice")
-    @classmethod
-    def validate_voice(cls, v: str | None) -> str | None:
-        return _validate_voice_not_empty(v)
-
-    @field_validator("instructions")
-    @classmethod
-    def validate_instructions(cls, v: str | None) -> str | None:
-        return _validate_instructions_length(v)
-
-    @field_validator("max_new_tokens")
-    @classmethod
-    def validate_max_new_tokens(cls, v: int | None) -> int | None:
-        return _validate_max_new_tokens_range(v)
-
-    @field_validator("ref_audio")
-    @classmethod
-    def validate_ref_audio(cls, v: str | None) -> str | None:
-        return _validate_ref_audio_uri(v)
 
 
 class SpeechInputTokenDetails(BaseModel):
@@ -648,7 +590,8 @@ class StreamingSpeechSessionConfig(BaseModel):
         default=False,
         description=(
             "If true, send raw PCM audio chunks progressively over WebSocket. "
-            "Requires response_format='pcm'. Speed adjustment is not supported when streaming."
+            "Requires response_format='pcm'. WebSocket streaming currently requires "
+            "speed=1.0, including for models with native speed control."
         ),
     )
     word_timestamps: bool = Field(
@@ -658,6 +601,22 @@ class StreamingSpeechSessionConfig(BaseModel):
             "base64-encoded PCM plus aligned word timestamps. Requires the server to be "
             "launched with --forced-aligner. When false, audio is sent as raw binary "
             "frames (existing behavior)."
+        ),
+    )
+    seed: int | None = Field(
+        default=None,
+        ge=_INT64_MIN,
+        le=_INT64_MAX,
+        description="Random seed forwarded to /v1/audio/speech for this session.",
+    )
+    split_granularity: Literal["none", "sentence", "clause"] = Field(
+        default="none",
+        description=(
+            "How incoming input.text is segmented before TTS. 'none' (default) "
+            "buffers until input.done and runs one request, matching the "
+            "long-form timbre-continuity path. 'sentence' emits a request at "
+            "each sentence boundary (Latin .!? plus CJK/Indic/Arabic marks). "
+            "'clause' also splits on commas/semicolons for lower TTFA."
         ),
     )
 
@@ -672,5 +631,8 @@ class StreamingSpeechSessionConfig(BaseModel):
             if self.speed is None:
                 self.speed = 1.0
             elif self.speed != 1.0:
-                raise ValueError("Speed adjustment is not supported when stream_audio=true. Set speed=1.0 or omit it.")
+                raise ValueError(
+                    "WebSocket stream_audio=true currently requires speed=1.0; "
+                    "native speed control is only available through HTTP streaming."
+                )
         return self
