@@ -9,9 +9,6 @@ Examples:
 
     # Use a specific uploaded/supported voice
     python speech_client.py --text "Hello" --voice my_uploaded_voice
-
-    # Clone a reference voice and let the server transcribe the reference audio
-    python speech_client.py --text "hello" --ref-audio /path/to/ref_audio.wav
 """
 
 import argparse
@@ -50,7 +47,8 @@ def run_tts(args) -> None:
         "response_format": args.response_format,
     }
     if args.seed is not None:
-        payload["seed"] = args.seed
+        payload["extra_params"] = {}
+        payload["extra_params"]["seed"] = args.seed
 
     if args.voice:
         payload["voice"] = args.voice
