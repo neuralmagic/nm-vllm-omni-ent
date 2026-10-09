@@ -2,11 +2,22 @@
 
 This directory contains midstream-only content for `nm-vllm-omni-ent`. Nothing here exists in the upstream `vllm-project/vllm-omni` repository, so it is safe from upstream rebases and merges.
 
+## Upstream sync and carries
+
+Use [Upstream sync and carry replay](carry-replay.md) when moving this
+repository to a new upstream vLLM-Omni release. It defines the clean-baseline
+construction, Jira carry ledger, replay manifest, complete-tree audit, and
+validation requirements.
+
+Do not merge an old downstream branch into a clean sync branch. Restore the
+reviewed Midstream infrastructure and replay only manifest-backed carries that
+are approved for the selected upstream version.
+
 ## Build Pipeline
 
 Omni builds run in [nm-cicd](https://github.com/neuralmagic/nm-cicd) via `omni-pipeline.yml`:
 
-```
+```text
 accept-sync (wheel + image + partition tests) → OCP model validation
 ```
 
@@ -17,7 +28,7 @@ The base vLLM wheel is reused via `midstream/vllm-wheels.yml` (`vllm_run_id`).
 Use the **Omni release** workflow from the [Actions tab](../../actions/workflows/omni-release.yml):
 
 | Trigger | What happens |
-|---------|--------------|
+| --------- | -------------- |
 | Push tag `omni-*` | Full pipeline in nm-cicd: accept-sync + OCP validation (`wf_category=RELEASE`) |
 | Manual **Omni release** | Dispatch to nm-cicd `omni-pipeline.yml` — choose ref, category, and whether to run OCP validation |
 | Pull request (open / push) | [Omni release](../../actions/workflows/omni-release.yml) — full pipeline + commit status on PR |
@@ -48,7 +59,7 @@ Two files control which vLLM wheel gets used:
 
 A single line declaring the vLLM version this omni code is built against:
 
-```
+```text
 v0.20.0
 ```
 
@@ -66,6 +77,7 @@ v0.20.0:
 ```
 
 **When to update:**
+
 - **New vLLM version:** after rebasing upstream, update `vllm-version` and add a new entry to `vllm-wheels.yml` once you've built a wheel for it
 - **New wheel for existing version:** update the `run_id` for that version entry
 
@@ -110,11 +122,9 @@ gh workflow run build-image.yml --repo neuralmagic/nm-cicd \
   -f vllm_run_id=<VLLM_RUN_ID>
 ```
 
-## Workflow Naming Convention
+## GitHub workflow ownership
 
-Workflows in `.github/workflows/` are a mix of upstream and midstream:
-
-- **Upstream workflows** (e.g. `build_wheel.yml`, `pre-commit.yml`) — carried forward from `vllm-project/vllm-omni`
-- **Midstream workflows** — `omni-release.yml` (tag, pull request, manual)
-
-See [.github-upstream-policy.md](.github-upstream-policy.md) for rebase guidelines.
+The `.github/` directory is a Midstream-owned integration boundary. Upstream
+workflows are not carried automatically. Only the reviewed Midstream workflows
+documented in [.github-upstream-policy.md](.github-upstream-policy.md) may run
+in this repository.
