@@ -25,12 +25,16 @@ without a conflict or an explicit replay decision.
   for the carry, its upstream plan, and its focused validation. Midstream
   coordinates the sync and enforces the gate; that does not transfer ownership
   of the implementation.
-- **Carry record**: a small, independently mergeable file under
-  `midstream/carries/` that links one carry to its Jira issue, downstream PR,
-  upstream references, validation contract, and retirement condition.
-- **Replay manifest**: the generated, machine-readable snapshot of the
-  immutable baseline, selected carry records, exact replay commits, and
-  validation evidence for one sync.
+- **Versioned carry record**: a small, independently mergeable file under
+  `midstream/carries/<upstream-tag>/<jira-key>.yml` that records one carry's
+  description, Jira issue, upstream references, compact Git replay recipe,
+  validation contract, and retirement condition.
+- **Static carry**: a narrowly scoped, Midstream-owned tooling, packaging, or
+  release-integration delta under `midstream/carries/static/` that is replayed
+  for every sync and does not require a component-owned Jira ledger issue.
+- **Sync manifest**: the machine-readable snapshot of the immutable upstream
+  and previous-downstream inputs plus the infrastructure replay source for one
+  sync. It does not duplicate the carry inventory.
 
 Location does not decide classification. A runtime change under a familiar
 path is still a carry, and a new file can be a carry even when Git reports no
@@ -39,8 +43,9 @@ repository integration does not hide component carry debt.
 
 ## Carry acceptance policy
 
-Every carry pull request must have exactly one INFERENG Jira issue serving as
-its ledger record. The downstream PR and Jira issue must link to each other.
+Every non-static carry pull request must have exactly one INFERENG Jira issue
+serving as its ledger record. The Midstream PR and Jira issue must link to each
+other after the PR is opened.
 A validation task may be linked separately, but it does not replace the carry
 issue.
 
@@ -73,7 +78,7 @@ or backport ownership to Midstream.
 
 The carry issue must record:
 
-1. the downstream repository and pull request;
+1. the Midstream repository and pull request, added after the PR is opened;
 2. the target upstream sync version;
 3. the accountable owner as Jira assignee;
 4. additional SMEs in Jira's multi-user **Contributors** field;
@@ -103,7 +108,7 @@ template and replace every prompt; when a field does not apply, state why.
 ```markdown
 ## Carry
 
-- **Downstream PR:** <repository-qualified PR URL>
+- **Midstream PR:** <repository-qualified PR URL, or Pending until opened>
 - **Target upstream release:** <tag>
 - **Owner:** <name; must match assignee>
 - **Additional SMEs:** <names; must match Contributors, or None>
@@ -130,7 +135,8 @@ template and replace every prompt; when a field does not apply, state why.
 <The upstream release and evidence that will allow this carry to be removed.>
 ```
 
-Link the Jira issue from the downstream PR and the downstream PR from Jira.
+Link the Jira issue from the Midstream PR and add the PR link to Jira after the
+PR is opened. PR creation is not blocked on knowing its eventual URL.
 The structured assignee, Contributors, component, and labels remain the
 queryable source of truth; repeating owner names in the description keeps the
 record readable when it is viewed outside a Jira query.
@@ -152,8 +158,8 @@ older version labels as history. Jira workflow status is not the carry
 lifecycle: an implementation issue may be Closed while its delta still needs
 to be replayed.
 
-Keep the Jira issue In Progress or Review while its downstream carry PR is
-open. Close it after the downstream PR merges and the carry's focused
+Keep the Jira issue In Progress or Review while its Midstream carry PR is open.
+Close it after the Midstream PR merges and the carry's focused
 validation evidence is recorded. The `omni-carry-active` and sync-version
 labels remain after closure so future syncs can still discover the obligation.
 Release-wide validation belongs to the owning sync issue and does not keep the
@@ -184,14 +190,14 @@ the returned Jira keys. This makes omissions reviewable.
 
 ### Lifecycle updates
 
-- **Proposal**: create the Jira issue, set `omni-carry` and
-  `omni-carry-proposed`, and link the downstream PR.
+- **Proposal**: create the Jira issue and set `omni-carry` plus
+  `omni-carry-proposed`; add the Midstream PR link after the PR is opened.
 - **Approval for a sync**: record the decision and evidence, replace
   `omni-carry-proposed` with `omni-carry-active`, and add the sync-version
   label.
-- **Replay**: record the exact replay identity and validation in both the sync
-  manifest and Jira.
-- **Downstream merge**: after the carry PR merges and its focused validation is
+- **Replay**: record the compact Git replay identity in the versioned carry
+  record and record the disposition and validation evidence in Jira.
+- **Midstream merge**: after the carry PR merges and its focused validation is
   recorded, close the Jira issue while preserving `omni-carry-active` and all
   sync-version labels.
 - **Retirement**: record the selected upstream tag and validation proving the
@@ -209,21 +215,26 @@ alone is not proof that the ledger is queryable.
 
 ## Carry records
 
-Each carry pull request adds one uniquely named
-`midstream/carries/<jira-key>.yaml` file. Different carry pull requests never
-edit a shared release file, so recording concurrent carries does not itself
-require their owners to rebase. Carry records are durable declarations, not
-release snapshots.
+Each non-static carry pull request adds one uniquely named
+`midstream/carries/<upstream-tag>/<jira-key>.yml` file. The version directory
+is the authoritative checked-in inventory for that sync; do not repeat its
+members in the sync manifest. Different carry pull requests add different
+files, so recording concurrent carries does not itself require their owners to
+rebase.
 
 Keep each record short enough to maintain by hand:
 
 ```yaml
 schema: 1
 jira: INFERENG-00001
-downstream_pr: https://github.com/neuralmagic/nm-vllm-omni-ent/pull/000
+description: One-line description of the retained Midstream behavior.
 upstream:
   references:
     - https://github.com/vllm-project/vllm-omni/pull/000
+replay:
+  kind: commit
+  commits:
+    - 0000000000000000000000000000000000000000
 validation:
   - focused behavior or artifact check owned by the carry owner
 retire_when: >-
@@ -231,23 +242,58 @@ retire_when: >-
   validation passes without the downstream delta.
 ```
 
-Jira remains authoritative for mutable owner, Contributors, approval,
-lifecycle, and sync-version labels. Do not duplicate those fields in the carry
-record. Do not manually list affected paths or hunks: Git derives them from the
-resolved replay commits. Add an optional replay dependency or override only
-when the default independent replay is insufficient.
+The upstream tag is encoded once in the directory name. Jira remains
+authoritative for mutable owner, Contributors, approval, lifecycle, and
+sync-version labels. Do not duplicate those fields or a Midstream PR URL in the
+carry record. The PR can be discovered from Git history and remains linked from
+Jira after it is opened.
 
-The pull request, Jira issue, and carry record must link the same carry. A carry
-record may merge before approval, but it does not make the carry active; Jira's
-approval evidence and labels remain the gate.
+Keep `replay` compact. Record the commit or bounded commit series that applies
+the carry. For an adapted or synthetic merge, record its commit, base commit,
+result tree, and source commits. These Git objects shortcut reconstruction but
+are not blindly trusted instructions: verify that they resolve and produce the
+expected delta or tree against the selected baseline. Do not manually list
+affected paths or hunks; Git derives them from the recorded objects. Add an
+optional dependency or override only when independent replay is insufficient.
+
+The pull request, Jira issue, and versioned carry record must identify the same
+carry. A record may merge before approval, but directory membership does not
+make the carry active; Jira's approval evidence and labels remain the gate.
+
+## Static carries
+
+Put an always-replayed, Midstream-owned release invariant in
+`midstream/carries/static/<slug>.yml`. Static carries do not require a Jira
+issue, but each record must contain a one-line description, compact Git replay
+recipe, validation contract, and retirement or review condition. Maintain them
+through ordinary code review.
+
+Use this category only for tooling, packaging, build, or release-integration
+behavior owned by Midstream and expected in every sync. A component feature,
+runtime behavior change, or delta needing an external owner or upstream plan
+is a versioned Jira carry instead. Static is an ownership classification, not
+a way to bypass the carry approval process.
+
+```yaml
+schema: 1
+description: One-line description of the Midstream-owned release invariant.
+replay:
+  kind: commit
+  commits:
+    - 0000000000000000000000000000000000000000
+validation:
+  - focused tooling, packaging, or release-integration check
+retire_when: >-
+  The Midstream release process no longer requires this invariant.
+```
 
 ## Per-sync replay manifest
 
-Each sync commits `midstream/sync-manifests/<upstream-tag>.yaml`. Jira remains
-authoritative for mutable approval and ownership, while carry records remain
-the independently mergeable declarations. The sync coordinator or automation
-generates the shared per-sync manifest only after selecting and replaying the
-approved carries. Carry authors do not edit it from their feature branches.
+Each sync commits `midstream/sync-manifests/<upstream-tag>.yaml`. It records the
+immutable sync inputs and infrastructure replay source. It does not contain a
+`carries` section: `midstream/carries/static/` plus the selected version
+directory define the checked-in carry inventory without a second hand-edited
+index.
 
 The manifest must contain:
 
@@ -263,32 +309,20 @@ previous_downstream:
   commit: 0000000000000000000000000000000000000000
 infrastructure:
   replay_commit: 0000000000000000000000000000000000000000
-carries:
-  - record: midstream/carries/INFERENG-00001.yaml
-    replay:
-      kind: commit
-      commits:
-        - 0000000000000000000000000000000000000000
-    resolved_jira:
-      owner: Example Owner
-      disposition: still-required
-      approval: https://redhat.atlassian.net/browse/INFERENG-00001
-    validation:
-      - https://ci.example.invalid/immutable-run
 ```
 
-Replace the example values; do not commit placeholders. Record exact commit or
-patch identities rather than a mutable branch name or PR head. Replay each
-carry as its own commit or bounded commit series on the clean sync branch. If a
-carry must be adapted to the new baseline, review the adaptation as part of the
-sync and record its resulting commit, not the stale source-branch ancestry.
+Replace the example values; do not commit placeholders. Replay each carry as
+its own commit or bounded commit series on the clean sync branch. If a carry
+must be adapted to the new baseline, review the adaptation as part of the sync
+and record its resulting Git objects in that carry's versioned file, not the
+stale source-branch ancestry.
 
-Affected paths and hunks are computed from the recorded replay commits with
+Affected paths and hunks are computed from carry-record replay objects with
 Git. Automation must detect paths touched by more than one replay and require
 an explicit dependency, replay order, or reviewed override. The final audit
 still compares the complete tree with the upstream baseline; deriving paths
 does not weaken the rule that every non-infrastructure delta must map to one
-approved replay.
+approved versioned or static carry.
 
 ## Sync procedure
 
@@ -300,8 +334,8 @@ Before editing the tree, record in the owning sync issue and draft manifest:
 - current downstream branch and resolved SHA;
 - target sync version;
 - owning sync Jira issue; and
-- the previous active-carry query, proposed new carry issues, and corresponding
-  carry-record paths.
+- the previous active-carry query, proposed new carry issues, and target
+  `midstream/carries/<upstream-tag>/` directory.
 
 Fetch the selected tag directly and verify its object before constructing the
 branch. For example:
@@ -332,8 +366,8 @@ list will miss.
 
 For every candidate carry:
 
-1. inspect its Jira issue, carry record, downstream PR, upstream references,
-   and owner;
+1. inspect its Jira issue, versioned carry record, Midstream PR, upstream
+   references, and owner;
 2. compare the selected upstream implementation and behavior;
 3. classify it as absorbed, partially absorbed, still required, replaced, or
    rejected;
@@ -355,9 +389,9 @@ commit. Replay each approved carry as its own commit or bounded commit series
 on the clean branch. Do not merge a carry PR branch when it includes stale
 ancestry; replay only the approved delta and resolve dependencies explicitly.
 
-After each replay, inspect the resulting commit and update the generated
-manifest with its actual identity and validation requirement. Git, not a
-hand-maintained YAML list, supplies the affected paths and hunks.
+After each replay, inspect the resulting commit and update that carry's
+versioned record with its compact Git recipe. Git, not a hand-maintained YAML
+list or sync-manifest index, supplies the affected paths and hunks.
 
 ### 4. Audit the complete tree
 
@@ -394,17 +428,19 @@ Record exact source SHAs, immutable artifact identities, CI run URLs, results,
 and accepted exceptions. A dispatched or still-running job is not validation.
 
 When validation exposes an adaptation problem, fix it on the clean branch,
-update the replay identity and manifest, rerun the affected checks, and record
-the result in the carry issue. Do not solve the failure by importing additional
-history from the old downstream branch.
+update the replay identity in the carry record, rerun the affected checks, and
+record the result in the carry issue. Do not solve the failure by importing
+additional history from the old downstream branch.
 
 ### 6. Close the replay loop
 
 Before merging the sync PR:
 
-- every manifest carry has one Jira issue, owner, upstream plan, approval, and
-  validation evidence plus one carry record;
-- every Jira issue approved for this sync appears exactly once in the manifest;
+- every file in the version directory has one Jira issue, owner, upstream plan,
+  approval, and validation evidence;
+- every Jira issue approved for this sync appears exactly once in the version
+  directory;
+- every static record still satisfies the narrow Midstream-owned criteria;
 - absorbed, replaced, rejected, and retired carries are not replayed;
 - the final tree audit contains no unexplained delta;
 - the owning sync issue links the baseline, manifest, carry query, sync PR,
@@ -414,7 +450,8 @@ Before merging the sync PR:
 ## Automation boundary
 
 Automation may query Jira, validate PR metadata, compare the tree with the
-manifest, or report drift. It must enforce this contract rather than silently
-decide ownership, approve a feature exception, or infer carries from history.
-The checked-in manifest and human approval evidence remain reviewable inputs;
-the automation mechanism may evolve independently.
+versioned and static carry records, or report drift. It must enforce this
+contract rather than silently decide ownership, approve a feature exception,
+or infer carries from history.
+The checked-in sync inputs, carry records, and human approval evidence remain
+reviewable inputs; the automation mechanism may evolve independently.
