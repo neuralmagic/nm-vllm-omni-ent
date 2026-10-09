@@ -1,0 +1,25 @@
+schema: 1
+jira: INFERENG-11446
+description: Replace the temporary realtime implementation with the upstream Qwen3-Omni version.
+upstream:
+  references:
+    - https://github.com/vllm-project/vllm-omni/pull/7285
+    - https://github.com/vllm-project/vllm-omni/pull/8279
+    - https://github.com/vllm-project/vllm-omni/pull/8339
+    - https://github.com/vllm-project/vllm-omni/pull/8566
+    - https://github.com/vllm-project/vllm-omni/pull/8294
+replay:
+  kind: commit
+  commits:
+    - e167550da448cd1687a02e50ecf2aabc3d6adff5
+    - 255c0ed4457634a9ac399622f865cb1b6ab29a72
+    - 68b72d08129a575594bf18ecf2a2866c2d7a227a
+    - fac146be1784fa453ce7d95760e8a625a44ab0ae
+    - 3598c55048073512d64e7335960e043d5c07a7d2
+validation:
+  - Run the advanced-model CUDA/H100 realtime websocket coverage, including the multi-turn server-VAD case.
+  - Run the realtime connection helpers, duplex API, examples, and LiveKit regression coverage.
+retire_when: >-
+  A selected upstream release contains PRs #7285, #8279, #8339, #8566, and
+  #8294, or an acceptable replacement, and focused plus release validation
+  passes without the Midstream delta.
