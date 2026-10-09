@@ -225,7 +225,6 @@ _MULTISTAGE_APP_STATE_KEYS = {
     "openai_streaming_speech",
     "openai_streaming_video",
     "openai_serving_duplex",
-    "openai_serving_realtime",
     "openai_serving_video",
     "openai_serving_realtime_robot",
     "rl_rollout_serving",
@@ -669,17 +668,15 @@ async def test_realtime_route_defaults_to_configured_duplex_handler(
         async def handle_realtime_session(self, _websocket) -> None:
             calls.append("duplex")
 
-    class _LegacyConnection:
-        async def handle_connection(self) -> None:
-            calls.append("legacy")
+    async def _dispatch_turn_based(_websocket) -> None:
+        calls.append("legacy")
 
-    monkeypatch.setattr(api_server, "RealtimeConnection", lambda _websocket, _serving: _LegacyConnection())
+    monkeypatch.setattr(api_server, "dispatch_realtime_websocket", _dispatch_turn_based)
     query_params = {} if duplex_query is None else {"duplex": duplex_query}
     websocket = SimpleNamespace(
         app=SimpleNamespace(
             state=SimpleNamespace(
                 openai_serving_duplex=_DuplexHandler(),
-                openai_serving_realtime=object(),
             )
         ),
         query_params=query_params,
@@ -1100,7 +1097,6 @@ async def test_multistage_app_state_key_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(api_server, "OmniOpenAIServingAudioGenerate", _FakeCtor)
     monkeypatch.setattr(api_server, "OmniStreamingSpeechHandler", _FakeCtor)
     monkeypatch.setattr(api_server, "create_streaming_video_handler", lambda **_k: _marker("streaming_video"))
-    monkeypatch.setattr(api_server, "OpenAIServingRealtime", _FakeCtor)
     monkeypatch.setattr(api_server, "OmniOpenAIServingVideo", _FakeCtor)
 
     state = State()
