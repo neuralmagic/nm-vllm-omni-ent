@@ -102,6 +102,13 @@ older version labels as history. Jira workflow status is not the carry
 lifecycle: an implementation issue may be Closed while its delta still needs
 to be replayed.
 
+Keep the Jira issue In Progress or Review while its downstream carry PR is
+open. Close it after the downstream PR merges and the carry's focused
+validation evidence is recorded. The `omni-carry-active` and sync-version
+labels remain after closure so future syncs can still discover the obligation.
+Release-wide validation belongs to the owning sync issue and does not keep the
+carry implementation issue open indefinitely.
+
 To list everything approved for the previous `v0.30.0` sync:
 
 ```jql
@@ -134,10 +141,18 @@ the returned Jira keys. This makes omissions reviewable.
   label.
 - **Replay**: record the exact replay identity and validation in both the sync
   manifest and Jira.
+- **Downstream merge**: after the carry PR merges and its focused validation is
+  recorded, close the Jira issue while preserving `omni-carry-active` and all
+  sync-version labels.
 - **Retirement**: record the selected upstream tag and validation proving the
   replacement, replace `omni-carry-active` with `omni-carry-retired`, and do
-  not add the new sync-version label.
-- **Rejection**: record the reason and do not add an active or version label.
+  not add the new sync-version label. A previously closed issue remains closed.
+- **Rejection or withdrawal**: record the reason, close the Jira issue, and do
+  not add an active or version label.
+
+Update a closed carry issue with replay comments and new sync-version labels;
+do not reopen it merely because another sync replays the same delta. Reopen it
+only when the accountable owner has new implementation work to perform.
 
 Read the issue back after updating fields or labels. A successful API response
 alone is not proof that the ledger is queryable.
