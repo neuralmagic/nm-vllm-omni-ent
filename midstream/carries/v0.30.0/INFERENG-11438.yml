@@ -1,0 +1,20 @@
+schema: 1
+jira: INFERENG-11438
+description: Add multimodal watermarking pending its inclusion in an upstream release.
+upstream:
+  references:
+    - https://github.com/vllm-project/vllm-omni/pull/7366
+replay:
+  kind: merge
+  commit: 1077da7a94ca2e74c7452b6b60b2c70536f62ad6
+  base_commit: 7b634ebb268832c62a4e56a1cc7b54548d4289a0
+  tree: 0efc18791c484d6513cdc8b0c293408b7289cdb3
+  source_commits:
+    - f7bf8cea09cd45cfdbb43a448fe89b9cd5570667
+    - 05efda1ef3f7af96f9510690d25a790cd2a560a3
+validation:
+  - Detect watermarks in supported modalities and confirm negative controls remain unwatermarked.
+  - Cover streaming paths where supported and run the release-selected model-validation scope.
+retire_when: >-
+  A selected upstream release contains PR #7366 or an acceptable replacement,
+  and focused plus release validation passes without the Midstream delta.

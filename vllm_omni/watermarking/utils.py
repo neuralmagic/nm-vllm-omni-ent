@@ -1,0 +1,223 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+
+import numpy as np
+import torch
+from vllm.logger import init_logger
+from vllm.outputs import RequestOutput
+
+from vllm_omni.config.watermarking import TEXT_MODALITY, WatermarkConfig
+from vllm_omni.engine import OmniEngineCoreOutput
+from vllm_omni.outputs import OmniRequestOutput
+from vllm_omni.outputs.mm_outputs import MultimodalCompletionOutput, MultimodalPayload
+from vllm_omni.outputs.output_modality import OutputModalityNames
+from vllm_omni.watermarking.base import Watermarker, WatermarkFailureError
+from vllm_omni.watermarking.converters import (
+    MEDIA_CONVERTERS,
+    infer_visual_channel_axis,
+    media_to_tensor,
+    restore_media,
+)
+
+logger = init_logger(__name__)
+
+OutputPayload = MultimodalPayload | dict[str, object]
+
+
+def watermark_media(
+    request_id: str,
+    modality: OutputModalityNames,
+    watermarker: Watermarker,
+    data: object,
+    metadata: Mapping[str, object],
+) -> object:
+    """Watermark one media value and restore its output type.
+
+    This is needed since current watermarkers assume torch tensors as inputs.
+    """
+    try:
+        # NOTE: This is to avoid double watermarking on cumulative semantics.
+        if modality == OutputModalityNames.AUDIO and isinstance(data, list):
+            raise TypeError("audio chunk lists must be watermarked per chunk before accumulation")
+        converter = MEDIA_CONVERTERS[modality]
+        source = data
+        wrapped_batch = False
+        if (
+            modality in {OutputModalityNames.IMAGE, OutputModalityNames.VIDEO}
+            and isinstance(data, list)
+            and len(data) == 1
+        ):
+            first = data[0]
+            expected_rank = 4 if modality is OutputModalityNames.IMAGE else 5
+            if isinstance(first, torch.Tensor | np.ndarray) and first.ndim == expected_rank:
+                source = first
+                wrapped_batch = True
+        tensor = media_to_tensor(source, converter.to_tensor)
+        if modality in {OutputModalityNames.IMAGE, OutputModalityNames.VIDEO}:
+            channel_axis = metadata.get("channel_axis")
+            if channel_axis is None:
+                channel_axis = infer_visual_channel_axis(source, tensor, modality)
+            metadata = {
+                **metadata,
+                "channel_axis": channel_axis,
+            }
+        watermarked = watermarker.watermark_output(request_id, tensor, metadata)
+        result = restore_media(watermarked, source, converter.restore)
+        return [result] if wrapped_batch else result
+    except (RuntimeError, TypeError, ValueError) as error:
+        raise WatermarkFailureError(f"invalid {modality.value} output") from error
+
+
+def watermark_payload(
+    request_id: str,
+    modality: OutputModalityNames,
+    watermarker: Watermarker,
+    payload: OutputPayload,
+) -> None:
+    """Watermark one modality payload in place."""
+    modality_key = modality.value
+    data = payload.get(modality_key)
+    if data is None or isinstance(data, list) and not data:
+        return
+    metadata: Mapping[str, object] = payload
+    if modality == OutputModalityNames.AUDIO and payload.get("sr") is None:
+        metadata = {"sr": payload.get("audio_sample_rate")}
+    result = watermark_media(request_id, modality, watermarker, data, metadata)
+    if not isinstance(payload, MultimodalPayload):
+        payload[modality_key] = result
+    elif modality_key not in payload.tensors:
+        payload.metadata[modality_key] = result
+    elif isinstance(result, torch.Tensor):
+        payload.tensors[modality_key] = result
+    else:
+        raise WatermarkFailureError("tensor payload must remain a tensor")
+
+
+def _watermark_core_output(
+    output: OmniEngineCoreOutput,
+    watermarkers: Mapping[str, Watermarker],
+) -> None:
+    """watermark engine core outputs."""
+    if output.multimodal_output is None:
+        return
+    for modality_key, watermarker in watermarkers.items():
+        modality = OutputModalityNames(modality_key)
+        payload = MultimodalPayload.from_raw(output.multimodal_output, modality.value)
+        if payload is None:
+            continue
+        watermark_payload(output.request_id, modality, watermarker, payload)
+        output.multimodal_output = payload  # type: ignore[assignment]
+
+
+def _watermark_visual_media(
+    output: OmniRequestOutput,
+    watermarkers: Mapping[str, Watermarker],
+) -> None:
+    """Apply watermarkers (if applicable) to visual tensors."""
+    watermarker = watermarkers.get(output.final_output_type)
+    if watermarker is None:
+        return
+    modality = OutputModalityNames(output.final_output_type)
+    metadata = output.multimodal_output
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    output.images = watermark_media(  # type: ignore[assignment]
+        output.request_id,
+        modality,
+        watermarker,
+        output.images,
+        metadata,
+    )
+
+
+def _watermark_request_output(
+    output: RequestOutput,
+    watermarkers: Mapping[str, Watermarker],
+) -> None:
+    payloads: list[OutputPayload] = [
+        completion.multimodal_output
+        for completion in output.outputs
+        if isinstance(completion, MultimodalCompletionOutput) and completion.multimodal_output is not None
+    ]
+
+    if isinstance(output, OmniRequestOutput) and not output.outputs:
+        if isinstance(output.multimodal_output, dict):
+            payloads.append(output.multimodal_output)
+
+    for payload in payloads:
+        for modality_key, watermarker in watermarkers.items():
+            watermark_payload(
+                output.request_id,
+                OutputModalityNames(modality_key),
+                watermarker,
+                payload,
+            )
+
+    if isinstance(output, OmniRequestOutput) and not output.outputs and output.images:
+        _watermark_visual_media(output, watermarkers)
+    if output.finished:
+        for watermarker in watermarkers.values():
+            watermarker.discard_request_state(output.request_id)
+
+
+def _watermark_output(
+    output: object,
+    watermarkers: Mapping[str, Watermarker],
+) -> None:
+    """Apply watermark to either core or request outputs."""
+    if isinstance(output, OmniEngineCoreOutput):
+        _watermark_core_output(output, watermarkers)
+    elif isinstance(output, RequestOutput):
+        _watermark_request_output(output, watermarkers)
+    else:
+        # Output type is unhandled for watermarking; this should not happen
+        raise TypeError(f"[watermark] unsupported output type: {type(output).__name__}")
+
+
+def _handle_watermark_failure(request_id: str, watermarkers: Mapping[str, Watermarker]) -> None:
+    """Log a watermark failure and discard any active state for this request.
+
+    NOTE: Whether it's strict / not strict doesn't matter here, since we don't handle it in utils.
+    """
+    for watermarker in watermarkers.values():
+        watermarker.discard_request_state(request_id)
+    logger.exception("Failed to watermark %s output for request %s", ", ".join(watermarkers), request_id)
+
+
+def watermark_outputs(
+    outputs: Sequence[OmniEngineCoreOutput | RequestOutput],
+    watermarkers: Mapping[str, Watermarker],
+) -> set[str]:
+    """Watermark outputs in place; returns the request ids whose outputs failed watermarking."""
+    watermark_failed_request_ids: set[str] = set()
+    for output in outputs:
+        try:
+            # TODO: Ensure failure behavior is correct for when we are handling multiple modalities
+            _watermark_output(output, watermarkers)
+        except WatermarkFailureError:
+            _handle_watermark_failure(output.request_id, watermarkers)
+            watermark_failed_request_ids.add(output.request_id)
+    return watermark_failed_request_ids
+
+
+def to_vllm_watermark_config(
+    watermark_config: WatermarkConfig | None,
+    final_output_type: str | None,
+    use_v2_model_runner: bool,
+) -> dict[str, object] | None:
+    """Select vLLM's text watermark config for a stage that outputs text."""
+    text_config = None if watermark_config is None else watermark_config.modalities.get(TEXT_MODALITY)
+    if text_config is None or final_output_type != TEXT_MODALITY:
+        return None
+
+    # vLLM only supports watermarking text through model runner v2
+    if not use_v2_model_runner:
+        logger.warning("Text output will not be watermarked; vLLM watermarking requires model_runner v2")
+        return None
+
+    # Validation is left to vLLM since we need to pass it to the vLLM Config initializer anyway
+    return dict(text_config)
