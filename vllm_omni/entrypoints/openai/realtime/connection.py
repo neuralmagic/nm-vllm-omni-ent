@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 from __future__ import annotations
 
 import asyncio
@@ -195,6 +198,14 @@ class FullDuplexRealtimeConnection:
 
         if self._uses_mcp(cfg):
             await self._send_unsupported_mcp(event_id)
+            return
+
+        # For watermarking, the OpenAI session model keeps it as an extra field for now
+        session_extra = event.session.model_extra or {}
+        if "watermarking" in session_extra and not isinstance(session_extra["watermarking"], bool):
+            await self._send_error(
+                "session.watermarking must be a boolean", "invalid_request_error", event_id=event.event_id
+            )
             return
 
         if "model" in cfg.model_fields_set and cfg.model != self.model_name:
@@ -680,6 +691,14 @@ class FullDuplexRealtimeConnection:
         except Exception:
             logger.debug("Failed to send failure response.done for %s", response_id, exc_info=True)
 
+    @staticmethod
+    def _build_opt_kwargs_from_model_extras(model_extra: dict[str, Any] | None) -> dict[str, Any]:
+        """build any optional kwargs to generate from the passed model_extra."""
+        opt_kwargs = {}
+        if model_extra and "watermarking" in model_extra:
+            opt_kwargs["watermarking"] = model_extra["watermarking"]
+        return opt_kwargs
+
     async def _run_response_inner(self, response_id, response, s, active):
         previous_item_id = s.items[-1].id if s.items else None
         modalities = response.modalities
@@ -867,11 +886,13 @@ class FullDuplexRealtimeConnection:
                         sp.structured_outputs = StructuredOutputsParams(structural_tag=structural_tag_json)
                     thinker_params_configured = True
 
+        opt_kwargs = self._build_opt_kwargs_from_model_extras(s.config.model_extra)
         gen = self.engine.generate(
             prompt=prompt,
             request_id=active.request_id,
             sampling_params_list=sampling_params_list,
             output_modalities=modalities,
+            **opt_kwargs,
         )
 
         try:
