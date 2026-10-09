@@ -1,0 +1,15 @@
+schema: 1
+sync_issue: INFERENG-11102
+process_issue: INFERENG-11426
+upstream:
+  repository: vllm-project/vllm-omni
+  tag: v0.30.0
+  commit: a8576ccb725c4e21cd13c3eb5f9a546b21149d2b
+previous_downstream:
+  branch: main
+  commit: 7b634ebb268832c62a4e56a1cc7b54548d4289a0
+infrastructure:
+  replay_commit: 7b634ebb268832c62a4e56a1cc7b54548d4289a0
+  note: >-
+    This retroactive snapshot predates isolated infrastructure replay commits;
+    the recorded commit is the reviewed clean-main source.
