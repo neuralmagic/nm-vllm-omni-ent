@@ -85,6 +85,52 @@ The reporter or sync coordinator may be a Midstream maintainer, but the
 assignee is the component owner. A carry is not ready for replay while its
 owner, upstream plan, validation, or retirement condition is missing.
 
+### Issue template
+
+Create the issue as an INFERENG Story in the **INFERENG Midstream** component.
+Use the summary `[Carry] <one-line description of the downstream behavior>`.
+Set the component owner as assignee, add other accountable SMEs as
+**Contributors**, and apply `omni-carry` plus `omni-carry-proposed`. Do not add
+an active or sync-version label until approval is recorded.
+
+Keep the description short enough for a component owner to maintain. Copy this
+template and replace every prompt; when a field does not apply, state why.
+
+```markdown
+## Carry
+
+- **Downstream PR:** <repository-qualified PR URL>
+- **Target upstream release:** <tag>
+- **Owner:** <name; must match assignee>
+- **Additional SMEs:** <names; must match Contributors, or None>
+- **Why the release is insufficient:** <one or two sentences>
+
+## Upstream plan
+
+- **Upstream reference:** <repository-qualified PR/commit URL, or None yet>
+- **Status and plan:** <current disposition and the concrete upstream next step>
+
+## Scope and risk
+
+- **Behavior and bounded delta:** <what changes and the intended limits>
+- **Risk:** <main failure or compatibility risks>
+
+## Validation and approval
+
+- **Focused validation:** <tests owned by the carry owner>
+- **Release validation:** <required release-level checks>
+- **Exception approval:** <Not required, Pending, or approver and evidence URL>
+
+## Retirement condition
+
+<The upstream release and evidence that will allow this carry to be removed.>
+```
+
+Link the Jira issue from the downstream PR and the downstream PR from Jira.
+The structured assignee, Contributors, component, and labels remain the
+queryable source of truth; repeating owner names in the description keeps the
+record readable when it is viewed outside a Jira query.
+
 ### Labels
 
 Use these queryable labels:
