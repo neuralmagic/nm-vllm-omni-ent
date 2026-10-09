@@ -182,16 +182,6 @@ def _setup_diffusion_worker_proc_title_and_log_prefix(
     decorate_logs(process_name)
 
 
-def _cleanup_after_execution_error(exc: Exception) -> None:
-    """Release device tensors retained by a failed execution traceback."""
-    exc.__traceback__ = None
-    try:
-        gc.collect()
-        current_omni_platform.empty_cache()
-    except Exception:
-        logger.warning("Failed to release device memory after an execution error", exc_info=True)
-
-
 @contextmanager
 def _force_cutlass_fp8_linear_kernel(quant_config: object | None) -> Iterator[None]:
     import vllm.model_executor.layers.quantization.modelopt as vllm_modelopt
