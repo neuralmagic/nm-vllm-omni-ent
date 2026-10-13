@@ -19,6 +19,7 @@ from vllm.sampling_params import RequestOutputKind, SamplingParams
 
 from tests.helpers.serving_chat import build_serving_chat
 from vllm_omni.entrypoints.openai.realtime.connection import (
+    RESPONSE_CANCEL_NOT_ACTIVE,
     SAMPLE_RATE_HZ,
     OpenAIFullDuplexConnection,
     _ResolvedResponse,
@@ -823,3 +824,28 @@ async def test_realtime_watermarking_follows_session_updates(
     # Ensure that we have the right numbers of errors vs successful updates
     assert actual_error_codes == expected_error_codes
     assert actual_num_updated == expected_num_updated
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active_response_id", [None, "resp_active"])
+async def test_cancel_without_matching_active_response_uses_openai_error_code(active_response_id: str | None) -> None:
+    websocket = _FakeWebSocket()
+    connection, _ = _make_connection(websocket=websocket)
+    if active_response_id is not None:
+        connection.session.active_response = SimpleNamespace(
+            response_id=active_response_id, request_id=f"rt-{active_response_id}"
+        )
+
+    await connection._handle_response_cancel(
+        types.ResponseCancelEvent(type="response.cancel", event_id="evt_cancel", response_id="resp_finished")
+    )
+
+    (event,) = _websocket_events(websocket)
+    assert event["type"] == "error"
+    assert event["error"]["code"] == RESPONSE_CANCEL_NOT_ACTIVE
+    assert event["error"]["event_id"] == "evt_cancel"
+    assert not connection._response_cancel_event.is_set()
+    if active_response_id is None:
+        assert connection.session.active_response is None
+    else:
+        assert connection.session.active_response.response_id == active_response_id
