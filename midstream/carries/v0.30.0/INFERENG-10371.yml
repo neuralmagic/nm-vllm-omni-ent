@@ -1,0 +1,16 @@
+schema: 1
+jira: INFERENG-10371
+description: Include runtime-owned configuration and asset files in the published wheel.
+upstream:
+  references:
+    - https://github.com/vllm-project/vllm-omni/pull/7956
+replay:
+  kind: commit
+  commits:
+    - e9ff37f023342736a9669a1babbfebbd1239a086
+validation:
+  - Inspect the built wheel for the runtime-owned configuration and asset files.
+  - Exercise representative runtime lookups from the installed wheel.
+retire_when: >-
+  A selected upstream release contains PR #7956 or an acceptable replacement,
+  and its published wheel passes the artifact-level runtime-data checks.

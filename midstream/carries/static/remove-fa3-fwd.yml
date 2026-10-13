@@ -1,0 +1,15 @@
+schema: 1
+description: Exclude the fa3-fwd compatibility package from Midstream wheels and runtime environments.
+upstream:
+  references:
+    - https://github.com/vllm-project/vllm-omni/pull/7735
+replay:
+  kind: commit
+  commits:
+    - 6535da5688c5508c1b1421e7481004e22aac89d9
+validation:
+  - Verify fa3-fwd is absent from the wheel and runtime environment.
+  - Run FA2, FA3, dense output/LSE, and distributed ring output/LSE parity checks.
+retire_when: >-
+  Midstream no longer requires the fa3-fwd exclusion and the focused attention
+  correctness checks pass without this release invariant.

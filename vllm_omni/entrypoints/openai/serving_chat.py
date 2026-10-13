@@ -860,6 +860,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                     output_modalities=output_modalities,
                     arrival_time=request_timestamp,
                     lora_request=lora_request,
+                    watermarking=request.watermarking,
                 )
 
                 generators.append(generator)
@@ -3819,6 +3820,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                 prompt=gen_prompt,
                 sampling_params_list=sampling_params_list,
                 request_id=request_id,
+                watermarking=request.watermarking,
             ):
                 result = output
             if result is None:

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+
 """Output modality types for vLLM-Omni.
 
 This module defines the OutputModality enum and TensorAccumulationStrategy
@@ -38,6 +41,7 @@ class OutputModalityNames(str, Enum):
     IMAGE = "image"
     AUDIO = "audio"
     LATENT = "latent"
+    VIDEO = "video"
 
 
 # Specify which output modalities may be drained when handling delta messages.
@@ -65,6 +69,7 @@ class OutputModality(Flag):
     IMAGE = auto()
     AUDIO = auto()
     LATENT = auto()
+    VIDEO = auto()
 
     @classmethod
     def from_string(cls, s: str | None) -> OutputModality:
