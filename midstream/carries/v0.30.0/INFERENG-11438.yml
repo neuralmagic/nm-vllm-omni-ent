@@ -8,6 +8,8 @@ replay:
   kind: commit
   commits:
     - 01efb345cc6cf19cfe5a8d348a57a3203badd78d
+    - 3623ac3c3d2a08a07de3d8343546dca1075cb035
+    - 34d1faa7644b5aa0fe9d0c71a767db644039fd1f
 validation:
   - Detect watermarks in supported modalities and confirm negative controls remain unwatermarked.
   - Cover streaming paths where supported and run the release-selected model-validation scope.
