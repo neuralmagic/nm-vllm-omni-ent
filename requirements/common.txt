@@ -6,7 +6,7 @@
 # MOSS-TTS-Nano's list/set weight-loading compatibility is handled by
 # transformers_keys_to_ignore_compat in model_executor/models/utils.py.
 transformers >= 5.13.0, < 5.15
-av>=14.0.0
+av>=13.1.0
 omegaconf>=2.3.0
 diffusers==0.40.0
 # Hub kernels, including LTX-2.5 NATTEN. 0.16+ resolves torch-stable-abi*
