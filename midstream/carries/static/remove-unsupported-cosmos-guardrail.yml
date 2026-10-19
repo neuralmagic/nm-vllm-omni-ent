@@ -1,0 +1,15 @@
+schema: 1
+description: Exclude unsupported Cosmos/video guardrail dependencies from Midstream wheel builds.
+upstream:
+  references:
+    - https://github.com/vllm-project/vllm-omni/pull/6107
+replay:
+  kind: commit
+  commits:
+    - 7cf200dfa3f7f91ff4adafc036b1bbb388d2ed84
+validation:
+  - Verify the wheel dependency metadata contains neither cosmos-guardrail nor retinaface-py.
+  - Run the supported RHAI vLLM-Omni model smoke suite.
+retire_when: >-
+  RHAI supports a Cosmos or video model requiring this guardrail stack and its
+  dependencies can be delivered through the supported AIPCC source-build path.
