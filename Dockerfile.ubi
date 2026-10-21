@@ -92,7 +92,7 @@ ENV LD_LIBRARY_PATH="${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages/nv
 ENV LIBRARY_PATH="${CUDA_HOME}/lib64/stubs:/usr/lib64"
 
 # Triton needs a CC compiler, triton-kernels install from a git URL
-RUN microdnf install -y gcc git libxcb && \
+RUN microdnf install -y gcc git libxcb mesa-libGL && \
     microdnf clean all
 
 # espeak-ng: TTS phonemizer backend (Qwen3-TTS, etc.)
