@@ -120,9 +120,9 @@ class ImageGenerationRequest(BaseModel):
         """Validate the layers parameter for layered image models."""
         return validate_layered_layers(v)
 
-    @field_validator("negative_prompt", "system_prompt")
+    @field_validator("system_prompt")
     @classmethod
-    def validate_optional_string_fields(cls, v):
+    def validate_system_prompt(cls, v: str | None) -> str | None:
         if v is not None and not v.strip():
             raise ValueError("field must be a non-empty string or null")
         return v
