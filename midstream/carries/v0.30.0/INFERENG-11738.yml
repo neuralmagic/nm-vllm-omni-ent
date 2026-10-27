@@ -1,0 +1,21 @@
+schema: 1
+jira: INFERENG-11738
+description: Align OpenAI realtime duplex compatibility pending inclusion in an upstream release.
+upstream:
+  references:
+    - https://github.com/vllm-project/vllm-omni/pull/8839
+    - https://github.com/vllm-project/vllm-omni/pull/8840
+    - https://github.com/vllm-project/vllm-omni/pull/8896
+replay:
+  kind: commit
+  commits:
+    - 47621a326053a3eec87e40e5f5ea37bb8bcc964d
+    - b6892e9f8bbd67c8bfb4b731e3b8708dddb59400
+    - 0721b2b57e6217d1160861d211e462f8ede35
+validation:
+  - Run the realtime duplex API, Qwen3-Omni websocket, and realtime prompt-preflight coverage changed by PR #68.
+  - Run the Midstream wheel, image, accept-sync, and selected model-validation scope.
+retire_when: >-
+  A selected upstream release contains PRs #8839, #8840, and #8896, or
+  acceptable replacements, and focused plus release validation passes without
+  the Midstream delta.
