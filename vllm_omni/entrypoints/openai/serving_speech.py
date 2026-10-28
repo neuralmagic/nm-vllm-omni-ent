@@ -2349,8 +2349,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             # to allow tests to catch invalid voices generally
             request.voice = self._get_normalized_voice(request.voice)
 
-            # Assume that this will follow the same adapter pattern
-            # once all RFC is implemented
+            assert self._adapter is not None
             validation_error = self._adapter.validate(request)
             if validation_error is not None:
                 raise ValueError(validation_error)
