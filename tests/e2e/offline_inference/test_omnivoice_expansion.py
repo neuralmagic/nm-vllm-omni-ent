@@ -19,7 +19,6 @@ from tests.helpers.mark import hardware_test
 from tests.helpers.media import convert_audio_file_to_text, get_asset_path
 from tests.helpers.runtime import OmniRunner
 from tests.helpers.stage_config import get_deploy_config_path
-from vllm_omni.inputs.data import OmniDiffusionSamplingParams
 
 MODEL = "k2-fsa/OmniVoice"
 DEPLOY_CONFIG = get_deploy_config_path("omnivoice.yaml")
@@ -51,7 +50,7 @@ def test_omnivoice_text_to_audio(omni_runner: OmniRunner) -> None:
     Output Modal: audio
     """
     prompts = {"prompt": "Hello, this is a test for text to audio."}
-    sampling_params_list = [OmniDiffusionSamplingParams()]
+    sampling_params_list = omni_runner.get_default_sampling_params_list()
 
     outputs = list(omni_runner.omni.generate(prompts, sampling_params_list=sampling_params_list))
 
@@ -91,7 +90,8 @@ def test_omnivoice_ref_audio_without_ref_text(omni_runner: OmniRunner, tmp_path)
     }
 
     def generate_audio():
-        sampling_params_list = [OmniDiffusionSamplingParams(extra_args={"seed": _OMNIVOICE_REF_AUDIO_SEED})]
+        sampling_params_list = omni_runner.get_default_sampling_params_list()
+        sampling_params_list[0].extra_args["seed"] = _OMNIVOICE_REF_AUDIO_SEED
         outputs = list(omni_runner.omni.generate(prompts, sampling_params_list=sampling_params_list))
         assert outputs, "No outputs generated"
         final_output = outputs[-1]
