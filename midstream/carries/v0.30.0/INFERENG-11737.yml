@@ -1,0 +1,16 @@
+schema: 1
+jira: INFERENG-11737
+description: Validate and normalize OmniVoice instructions pending inclusion in an upstream release.
+upstream:
+  references:
+    - https://github.com/vllm-project/vllm-omni/pull/6105
+replay:
+  kind: commit
+  commits:
+    - dec5c90d68bf48a87ff45a60d6ef4e1516d33efa
+validation:
+  - Run the OmniVoice instruction guard, online and offline E2E, and model test coverage recorded by PR #66.
+  - Document the known broader CPU-suite failure that also reproduces on Midstream main and is tracked by upstream issue #8507.
+retire_when: >-
+  A selected upstream release contains PR #6105 or an acceptable replacement,
+  and focused plus release validation passes without the Midstream delta.
