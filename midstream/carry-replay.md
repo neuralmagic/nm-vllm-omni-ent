@@ -10,6 +10,13 @@ Midstream infrastructure and approved carries. Never merge the old downstream
 branch into the clean sync branch; additive files can survive such a merge
 without a conflict or an explicit replay decision.
 
+This is an experimental, living operating specification. Its purpose is to
+make carry decisions, risks, ownership, and release work visible early enough
+to solve problems together. It is not a litigation, blame, or compliance
+artifact. When a real case does not fit this procedure, record the exception,
+its approver, and the follow-up decision; then improve this document from that
+evidence.
+
 ## Terms and ownership boundaries
 
 - **Upstream baseline**: the selected upstream release tag and its immutable
@@ -21,10 +28,11 @@ without a conflict or an explicit replay decision.
 - **Carry**: a source, runtime, dependency, packaging, example, or test change
   that causes the release tree or its behavior to differ from the selected
   upstream baseline.
-- **Carry owner**: the component engineer or subject-matter expert accountable
-  for the carry, its upstream plan, and its focused validation. Midstream
-  coordinates the sync and enforces the gate; that does not transfer ownership
-  of the implementation.
+- **Carry steward**: the component engineer or subject-matter expert accountable
+  for the carry's ledger, upstream plan, focused validation, and retirement
+  decision. Implementation authors and upstream contributors may be different
+  people and belong in Jira Contributors. Midstream coordinates the sync and
+  enforces the gate; that does not transfer ownership of the implementation.
 - **Versioned carry record**: a small, independently mergeable file under
   `midstream/carries/<upstream-tag>/<jira-key>.yml` that records one carry's
   description, Jira issue, upstream references, compact Git replay recipe,
@@ -43,9 +51,11 @@ repository integration does not hide component carry debt.
 
 ## Carry acceptance policy
 
-Every non-static carry pull request must have exactly one INFERENG Jira issue
-serving as its ledger record. The Midstream PR and Jira issue must link to each
-other after the PR is opened.
+Every non-static logical carry must have exactly one INFERENG Jira issue serving
+as its ledger record and one versioned carry record for each target sync. A
+Midstream PR may contain multiple logical carries, and a logical carry may span
+multiple PRs or branches. Each related PR and Jira issue must link to one
+another after the PR is opened.
 A validation task may be linked separately, but it does not replace the carry
 issue.
 
@@ -64,10 +74,18 @@ patch equivalence. Upstream may squash, rewrite, or supersede a change. A carry
 whose upstream PR has merged is not retired until the selected tag contains an
 acceptable replacement and the required validation proves it.
 
+An upstream rejection, a removed model, or a carry that cannot be reconciled
+with a selected upstream does not make the ledger a failure. Record one of the
+explicit outcomes: retain a bounded residual delta, accept an explicitly
+maintained downstream divergence, replace the behavior, or reject/withdraw the
+carry and revisit its support commitment. The release owner decides whether the
+remaining risk and validation cost are acceptable; the ledger makes that choice
+visible rather than silently treating it as upstream-first work.
+
 Net-new feature carries are rejected by default. An exception must satisfy the
 release change policy proposed in
 [nm-vllm-omni-ent PR #55](https://github.com/neuralmagic/nm-vllm-omni-ent/pull/55):
-the Jira record must include an accountable component owner, upstream PR and
+the Jira record must include an accountable component steward, upstream PR and
 merge plan, bounded patch and risk, test plan or automated tests, and explicit
 Release Owner approval before merge. Approval does not transfer implementation
 or backport ownership to Midstream.
@@ -80,29 +98,33 @@ The carry issue must record:
 
 1. the Midstream repository and pull request, added after the PR is opened;
 2. the target upstream sync version;
-3. the accountable owner as Jira assignee;
+3. the accountable carry steward as Jira assignee;
 4. additional SMEs in Jira's multi-user **Contributors** field;
 5. the reason the selected upstream release is insufficient;
-6. the repository-qualified upstream PR or commit, or an explicit upstream
-   plan when no contribution exists yet;
+6. the repository-qualified upstream PR, or an explicit upstream plan when no
+   contribution exists yet; an upstream commit SHA is optional supporting
+   evidence, not an acceptance or retirement gate;
 7. the bounded patch, affected behavior, and risk;
 8. focused tests and release-level validation requirements;
 9. approval or rejection evidence when an exception is required; and
 10. the condition that will allow the carry to be removed.
 
 The reporter or sync coordinator may be a Midstream maintainer, but the
-assignee is the component owner. A carry is not ready for replay while its
-owner, upstream plan, validation, or retirement condition is missing.
+assignee is the accountable carry steward. If that steward changes roles or
+leaves, the component lead or manager assigns a replacement; the unresolved
+carry remains visible until then. A carry is not ready for replay while its
+steward, upstream plan, validation, or retirement condition is missing.
 
 ### Issue template
 
 Create the issue as an INFERENG Story in the **INFERENG Midstream** component.
 Use the summary `[Carry] <one-line description of the downstream behavior>`.
-Set the component owner as assignee, add other accountable SMEs as
+Set the carry steward as assignee, add implementation authors and other
+accountable SMEs as
 **Contributors**, and apply `omni-carry` plus `omni-carry-proposed`. Do not add
 an active or sync-version label until approval is recorded.
 
-Keep the description short enough for a component owner to maintain. Copy this
+Keep the description short enough for a carry steward to maintain. Copy this
 template and replace every prompt; when a field does not apply, state why.
 
 ```markdown
@@ -110,13 +132,14 @@ template and replace every prompt; when a field does not apply, state why.
 
 - **Midstream PR:** <repository-qualified PR URL, or Pending until opened>
 - **Target upstream release:** <tag>
-- **Owner:** <name; must match assignee>
+- **Carry steward:** <name; must match assignee>
 - **Additional SMEs:** <names; must match Contributors, or None>
 - **Why the release is insufficient:** <one or two sentences>
 
 ## Upstream plan
 
-- **Upstream reference:** <repository-qualified PR/commit URL, or None yet>
+- **Upstream PR:** <repository-qualified PR URL, or None yet>
+- **Upstream commit:** <optional supporting URL/SHA, or None>
 - **Status and plan:** <current disposition and the concrete upstream next step>
 
 ## Scope and risk
@@ -126,7 +149,7 @@ template and replace every prompt; when a field does not apply, state why.
 
 ## Validation and approval
 
-- **Focused validation:** <tests owned by the carry owner>
+- **Focused validation:** <tests owned by the carry steward>
 - **Release validation:** <required release-level checks>
 - **Exception approval:** <Not required, Pending, or approver and evidence URL>
 
@@ -138,7 +161,7 @@ template and replace every prompt; when a field does not apply, state why.
 Link the Jira issue from the Midstream PR and add the PR link to Jira after the
 PR is opened. PR creation is not blocked on knowing its eventual URL.
 The structured assignee, Contributors, component, and labels remain the
-queryable source of truth; repeating owner names in the description keeps the
+queryable source of truth; repeating steward names in the description keeps the
 record readable when it is viewed outside a Jira query.
 
 ### Labels
@@ -208,19 +231,26 @@ the returned Jira keys. This makes omissions reviewable.
 
 Update a closed carry issue with replay comments and new sync-version labels;
 do not reopen it merely because another sync replays the same delta. Reopen it
-only when the accountable owner has new implementation work to perform.
+only when the accountable steward has new implementation work to perform.
 
 Read the issue back after updating fields or labels. A successful API response
 alone is not proof that the ledger is queryable.
 
 ## Carry records
 
-Each non-static carry pull request adds one uniquely named
-`midstream/carries/<upstream-tag>/<jira-key>.yml` file. The version directory
-is the authoritative checked-in inventory for that sync; do not repeat its
-members in the sync manifest. Different carry pull requests add different
-files, so recording concurrent carries does not itself require their owners to
-rebase.
+Each non-static logical carry adds one uniquely named
+`midstream/carries/<upstream-tag>/<jira-key>.yml` file. A PR may add multiple
+records when it contains multiple carries; a carry spanning multiple branches
+uses one record with its bounded replay series and explicit dependency or
+replay order when needed. The version directory is the authoritative checked-in
+inventory for that sync; do not repeat its members in the sync manifest.
+Different carry pull requests add different files, so recording concurrent
+carries does not itself require their stewards to rebase.
+
+Add the receipt as a dedicated final commit after the carry delta is settled:
+for example, commits `A` and `B` for the retained behavior, followed by commit
+`C` for the carry record. This does not require rewriting, modifying, or
+co-authoring the implementation commits.
 
 Keep each record short enough to maintain by hand:
 
@@ -236,14 +266,14 @@ replay:
   commits:
     - 0000000000000000000000000000000000000000
 validation:
-  - focused behavior or artifact check owned by the carry owner
+  - focused behavior or artifact check owned by the carry steward
 retire_when: >-
   A selected upstream release contains the required behavior and the focused
   validation passes without the downstream delta.
 ```
 
 The upstream tag is encoded once in the directory name. Jira remains
-authoritative for mutable owner, Contributors, approval, lifecycle, and
+authoritative for mutable steward, Contributors, approval, lifecycle, and
 sync-version labels. Do not duplicate those fields or a Midstream PR URL in the
 carry record. The PR can be discovered from Git history and remains linked from
 Jira after it is opened.
@@ -255,6 +285,9 @@ are not blindly trusted instructions: verify that they resolve and produce the
 expected delta or tree against the selected baseline. Do not manually list
 affected paths or hunks; Git derives them from the recorded objects. Add an
 optional dependency or override only when independent replay is insufficient.
+The replay identity is downstream evidence. Upstream commit IDs are optional
+because upstream PRs may be squashed, rebased, or superseded; the upstream PR
+and recorded behavior are the durable provenance.
 
 The pull request, Jira issue, and versioned carry record must identify the same
 carry. A record may merge before approval, but directory membership does not
@@ -367,7 +400,7 @@ list will miss.
 For every candidate carry:
 
 1. inspect its Jira issue, versioned carry record, Midstream PR, upstream
-   references, and owner;
+   references, and steward;
 2. compare the selected upstream implementation and behavior;
 3. classify it as absorbed, partially absorbed, still required, replaced, or
    rejected;
@@ -436,7 +469,7 @@ additional history from the old downstream branch.
 
 Before merging the sync PR:
 
-- every file in the version directory has one Jira issue, owner, upstream plan,
+- every file in the version directory has one Jira issue, steward, upstream plan,
   approval, and validation evidence;
 - every Jira issue approved for this sync appears exactly once in the version
   directory;
@@ -445,7 +478,7 @@ Before merging the sync PR:
 - the final tree audit contains no unexplained delta;
 - the owning sync issue links the baseline, manifest, carry query, sync PR,
   validation, and unresolved decisions; and
-- owners are tagged in Jira for any action that remains theirs.
+- stewards are tagged in Jira for any action that remains theirs.
 
 ## Automation boundary
 
