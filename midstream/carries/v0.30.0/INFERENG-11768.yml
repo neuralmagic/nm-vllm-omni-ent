@@ -1,0 +1,16 @@
+schema: 1
+jira: INFERENG-11768
+description: Guard Qwen3-Omni Code2Wav dtype on Blackwell GPUs with cuDNN 9.20.
+upstream:
+  references:
+    - https://github.com/vllm-project/vllm-omni/pull/9144
+replay:
+  kind: commit
+  commits:
+    - d7af479cabd71412fde0c24e3da3a46740901b76
+validation:
+  - Run the Qwen3-Omni dtype and cuDNN test coverage plus the model-specific tests recorded by PR #71.
+  - Run the online/offline Qwen3-Omni coverage and the Midstream wheel, image, accept-sync, and selected model-validation scope.
+retire_when: >-
+  A selected upstream release contains PR #9144 or an acceptable replacement,
+  and focused plus release validation passes without the Midstream delta.

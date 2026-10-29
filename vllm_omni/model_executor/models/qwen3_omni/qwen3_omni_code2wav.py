@@ -31,6 +31,7 @@ from vllm_omni.model_executor.models.common.snake_activation import SnakeBeta
 from vllm_omni.model_executor.models.qwen3_omni.quantization import (
     Qwen3OmniNestedSupportsQuant,
 )
+from vllm_omni.platforms import current_omni_platform
 
 logger = init_logger(__name__)
 
@@ -74,6 +75,17 @@ class Qwen3OmniMoeCode2Wav(nn.Module, Qwen3OmniNestedSupportsQuant):
         super().__init__()
 
         self.config: Qwen3OmniMoeCode2WavConfig = vllm_config.model_config.hf_config
+        connector = getattr(vllm_config.model_config, "stage_connector_config", None)
+        extra = connector.get("extra", {}) if isinstance(connector, dict) else getattr(connector, "extra", {})
+        # Both the separate stage and the Talker's first-frame copy receive
+        # this connector config. Keep algorithm selection consistent between
+        # them, and leave other models' cuDNN settings unchanged.
+        self._cudnn_benchmark = (extra or {}).get("codec_cudnn_benchmark", False)
+        if not isinstance(self._cudnn_benchmark, bool):
+            raise ValueError("codec_cudnn_benchmark must be a boolean")
+        cudnn_fp32_fallback = (extra or {}).get("codec_cudnn_fp32_fallback", True)
+        if not isinstance(cudnn_fp32_fallback, bool):
+            raise ValueError("codec_cudnn_fp32_fallback must be a boolean")
 
         # Calculate total upsampling factor
         self.total_upsample = np.prod(self.config.upsample_rates + self.config.upsampling_ratios)
@@ -123,9 +135,41 @@ class Qwen3OmniMoeCode2Wav(nn.Module, Qwen3OmniNestedSupportsQuant):
         ]
         self.decoder = nn.ModuleList(decoder)
 
+        if cudnn_fp32_fallback:
+            self._apply_cudnn_dtype_workaround(vllm_config)
+
         # CUDA Graph support — reuses CUDAGraphDecoderWrapper from Qwen3-TTS
         self._cudagraph_enabled = False
         self._cudagraph_wrapper = None
+
+    def _apply_cudnn_dtype_workaround(self, vllm_config: VllmConfig) -> None:
+        """Promote this decoder on the exact stack reported in issue #8935."""
+        # cuDNN 9.20.0 produces incorrect low-precision Conv1d results for some
+        # Code2Wav window lengths on SM100/SM103 (issue #8935). Apply the
+        # known FP32 workaround before weight loading, Snake caches and graph
+        # capture, including the optional first-frame copy inside the Talker.
+        if (
+            self.code_embedding.weight.dtype not in (torch.bfloat16, torch.float16)
+            or not current_omni_platform.is_cuda()
+            or torch.backends.cudnn.version() != 92000
+        ):
+            return
+        device = torch.device(vllm_config.device_config.device)
+        if device.type != "cuda":
+            return
+        device_id = device.index if device.index is not None else torch.accelerator.current_device_index()
+        capability = current_omni_platform.get_device_capability(device_id)
+        if capability is None or (capability.major, capability.minor) not in ((10, 0), (10, 3)):
+            return
+        self.float()
+        logger.warning_once(
+            "Using float32 for Qwen3-Omni Code2Wav to avoid incorrect cuDNN 9.20.0 "
+            "low-precision Conv1d results on SM%d%d. This increases decoder memory "
+            "use. This fallback applies only to cuDNN 9.20.0. Set "
+            "codec_cudnn_fp32_fallback=false in connector extra to retain the requested dtype.",
+            capability.major,
+            capability.minor,
+        )
 
     def precompute_snake_caches(self):
         """Precompute exp(alpha) and 1/(exp(beta)+eps) for all SnakeBeta modules."""
