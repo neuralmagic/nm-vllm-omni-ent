@@ -1,0 +1,17 @@
+schema: 1
+jira: INFERENG-11811
+description: Add OmniVoice ASR fallback for missing reference text and align audio preprocessing.
+upstream:
+  references:
+    - https://github.com/vllm-project/vllm-omni/pull/5784
+replay:
+  kind: commit
+  commits:
+    - 5cc88a7e9c5c6141244838ccf9cb952013a32d16
+validation:
+  - Run the focused OmniVoice model, diffusion, online-serving, and offline-serving coverage recorded by PR #72.
+  - Treat test_output_modality_parsing_and_flags as a known unrelated failure in the broader CPU entrypoint/engine run.
+  - Run the Midstream wheel, image, accept-sync, and selected model-validation scope before release tagging.
+retire_when: >-
+  A selected upstream release contains PR #5784 or an acceptable replacement,
+  and focused plus release validation passes without the Midstream delta.

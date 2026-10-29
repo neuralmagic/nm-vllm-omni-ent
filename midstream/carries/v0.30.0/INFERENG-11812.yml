@@ -1,0 +1,17 @@
+schema: 1
+jira: INFERENG-11812
+description: Support long-form OmniVoice text-to-speech generation.
+upstream:
+  references:
+    - https://github.com/vllm-project/vllm-omni/pull/6409
+replay:
+  kind: commit
+  commits:
+    - d9fa5af77532ddfe79e6803112c88421093d2870
+validation:
+  - Run the focused OmniVoice model, diffusion, online-serving, and offline-serving coverage recorded by PR #72.
+  - Treat test_output_modality_parsing_and_flags as a known unrelated failure in the broader CPU entrypoint/engine run.
+  - Run the Midstream wheel, image, accept-sync, and selected model-validation scope before release tagging.
+retire_when: >-
+  A selected upstream release contains PR #6409 or an acceptable replacement,
+  and focused plus release validation passes without the Midstream delta.
