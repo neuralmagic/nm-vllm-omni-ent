@@ -1300,6 +1300,8 @@ def test_parameter_validation():
     # Prompts must contain something other than whitespace, except that an empty
     # negative prompt enables guidance with no negative text for Qwen-Image.
     with pytest.raises(ValueError, match="non-empty"):
+        ImageGenerationRequest(prompt="")
+    with pytest.raises(ValueError, match="non-empty"):
         ImageGenerationRequest(prompt="   ")
     with pytest.raises(ValueError, match="non-empty"):
         ImageGenerationRequest(prompt="test", system_prompt="   ")
