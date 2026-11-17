@@ -60,6 +60,8 @@ from vllm_omni.entrypoints.openai.tts_adapters.base import (
 )
 from vllm_omni.entrypoints.openai.tts_adapters.capabilities import load_supported_speakers
 from vllm_omni.entrypoints.openai.tts_adapters.ming_tts import MingTTSAdapter
+from vllm_omni.entrypoints.openai.tts_adapters.minimax_music3 import MiniMaxMusic3Adapter
+from vllm_omni.entrypoints.openai.tts_adapters.moss_tts import MossTTSAdapter
 from vllm_omni.entrypoints.openai.tts_adapters.omnivoice import OmniVoiceAdapter
 from vllm_omni.entrypoints.openai.tts_adapters.qwen3_tts import Qwen3TTSAdapter, Qwen3TTSCodecLimitError
 from vllm_omni.entrypoints.openai.tts_adapters.voxtral import VoxtralTTSAdapter
@@ -107,6 +109,7 @@ pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 def test_speech_request_rejects_empty_fields(model_cls, fields, message):
     with pytest.raises(ValidationError, match=message):
         model_cls(**fields)
+
 
 logger = logging.getLogger(__name__)
 
@@ -3362,6 +3365,81 @@ class TestTTSMethods:
         assert response.results[0].status == "success"
         assert request.ref_audio is not None
         assert call.kwargs["has_inline_ref_audio"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("override_location", ["batch", "item"])
+    async def test_batch_uses_configured_instructions_limit(
+        self, speech_server, mocker: MockerFixture, override_location: str
+    ):
+        speech_server._check_model = mocker.AsyncMock(return_value=None)
+        speech_server._batch_max_items = 32
+        speech_server._max_instructions_length = 1000
+        speech_server._generate_audio_bytes = mocker.AsyncMock(return_value=("YWJj", "audio/wav"))
+        instructions = "x" * 600
+        item_kwargs = {"instructions": instructions} if override_location == "item" else {}
+        batch_kwargs = {"instructions": instructions} if override_location == "batch" else {}
+        batch = BatchSpeechRequest(
+            items=[SpeechBatchItem(input="hello", **item_kwargs)],
+            task_type="VoiceDesign",
+            **batch_kwargs,
+        )
+
+        response = await speech_server.create_speech_batch(batch)
+
+        assert response.results[0].status == "success"
+        assert speech_server._generate_audio_bytes.await_args.args[0].instructions == instructions
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("override_location", ["batch", "item"])
+    async def test_moss_batch_defers_language_validation_to_adapter(
+        self, speech_server, mocker: MockerFixture, override_location: str
+    ):
+        speech_server._check_model = mocker.AsyncMock(return_value=None)
+        speech_server._batch_max_items = 32
+        speech_server._tts_model_type = "moss_tts"
+        speech_server.engine_client.model_config.model = "OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5"
+        speech_server._adapter = MossTTSAdapter(
+            SpeechServingContext(server=speech_server, engine_client=speech_server.engine_client)
+        )
+        speech_server._generate_audio_bytes = mocker.AsyncMock(return_value=("YWJj", "audio/wav"))
+        item_kwargs = {"language": "Arabic"} if override_location == "item" else {}
+        batch_kwargs = {"language": "Arabic"} if override_location == "batch" else {}
+        batch = BatchSpeechRequest(
+            items=[SpeechBatchItem(input="مرحبا بالعالم", **item_kwargs)],
+            ref_audio="data:audio/wav;base64,dGVzdA==",
+            **batch_kwargs,
+        )
+
+        response = await speech_server.create_speech_batch(batch)
+
+        assert response.results[0].status == "success"
+        assert speech_server._generate_audio_bytes.await_args.args[0].language == "Arabic"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("override_location", ["batch", "item"])
+    async def test_batch_uses_minimax_music3_frame_budget(
+        self, speech_server, mocker: MockerFixture, override_location: str
+    ):
+        speech_server._check_model = mocker.AsyncMock(return_value=None)
+        speech_server._batch_max_items = 32
+        speech_server._tts_model_type = "minimax_music3"
+        speech_server._adapter = MiniMaxMusic3Adapter(
+            SpeechServingContext(server=speech_server, engine_client=speech_server.engine_client)
+        )
+        speech_server._generate_audio_bytes = mocker.AsyncMock(return_value=("YWJj", "audio/wav"))
+        max_new_tokens = 5000
+        item_kwargs = {"max_new_tokens": max_new_tokens} if override_location == "item" else {}
+        batch_kwargs = {"max_new_tokens": max_new_tokens} if override_location == "batch" else {}
+        batch = BatchSpeechRequest(
+            items=[SpeechBatchItem(input="Short lyrics", **item_kwargs)],
+            instructions="A short acoustic song.",
+            **batch_kwargs,
+        )
+
+        response = await speech_server.create_speech_batch(batch)
+
+        assert response.results[0].status == "success"
+        assert speech_server._generate_audio_bytes.await_args.args[0].max_new_tokens == max_new_tokens
 
     @pytest.mark.asyncio
     async def test_warmup_with_no_adapter(self, speech_server):

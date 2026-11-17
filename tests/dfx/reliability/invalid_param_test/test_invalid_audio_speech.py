@@ -17,10 +17,9 @@ from tests.helpers.media import get_asset_path
 from tests.helpers.runtime import OmniServer, OmniServerParams, OnlineOmniClient
 from tests.helpers.stage_config import get_deploy_config_path
 
-# Speech / voice-upload numeric caps for these tests only (not exported from vllm_omni).
-# Align where possible with serving_speech defaults: _TTS_MAX_INSTRUCTIONS_LENGTH (500),
-# _TTS_MAX_NEW_TOKENS_MAX (4096). Voice form max lengths are not public constants in prod;
-# values below keep tests self-contained and deterministic.
+# Qwen3-TTS and voice-upload caps for these tests only (not exported from vllm_omni).
+# Batch requests are validated through the active adapter, so these values are
+# model-specific rather than global API schema limits.
 _SPEECH_API_MAX_INSTRUCTIONS_CHARS = 500
 _SPEECH_API_MAX_NEW_TOKENS = 4096
 _VOICE_UPLOAD_MAX_CONSENT_LEN = 1024
