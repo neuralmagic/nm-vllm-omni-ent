@@ -86,7 +86,7 @@ class ImageGenerationRequest(BaseModel):
 
     @field_validator("prompt")
     @classmethod
-    def validate_prompt(cls, v):
+    def validate_prompt(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("prompt must be a non-empty string")
         return v
@@ -197,7 +197,7 @@ class ImageGenerationRequest(BaseModel):
     # Output format for generated images
     output_format: str | None = Field(
         default=None,
-        description="Output image format: 'png', 'jpeg', or 'webp'. Defaults to 'png'.",
+        description="Output image format: 'png', 'jpg', 'jpeg', or 'webp'. Defaults to 'png'.",
     )
     output_compression: int = Field(
         default=100,
@@ -217,11 +217,14 @@ class ImageGenerationRequest(BaseModel):
 
     @field_validator("output_format")
     @classmethod
-    def validate_output_format(cls, v):
-        valid = {"png", "jpeg", "webp"}
-        if v is not None and v not in valid:
+    def validate_output_format(cls, v: str | None) -> str | None:
+        valid = {"png", "jpg", "jpeg", "webp"}
+        if v is None:
+            return None
+        normalized = v.lower()
+        if normalized not in valid:
             raise ValueError(f"output_format must be one of {sorted(valid)}, got: '{v}'")
-        return v
+        return normalized
 
 
 class ImageData(BaseModel):
