@@ -2764,7 +2764,11 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
                 status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
 
-    def _pre_validate_batch(self, batch: BatchSpeechRequest) -> None:
+    def _pre_validate_batch(
+        self,
+        batch: BatchSpeechRequest,
+        merged_requests: list[OpenAICreateSpeechRequest],
+    ) -> None:
         """Validate batch-level and item-level fields before per-item processing.
 
         Raises ValueError so the API handler returns HTTP 400 rather than
@@ -2784,12 +2788,6 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
                 supported = ", ".join(sorted(available_speakers)) or "none"
                 raise ValueError(f"Invalid voice '{voice}'. Supported: {supported}")
 
-        def _check_language(language: str) -> None:
-            lang_title = language.title()
-            if not language.strip() or lang_title not in self.supported_languages:
-                supported = ", ".join(sorted(self.supported_languages))
-                raise ValueError(f"Invalid language '{language}'. Supported: {supported}")
-
         def _check_base_ref_text(ref_text: str | None, x_vector_only: bool | None) -> None:
             if x_vector_only:
                 return
@@ -2801,19 +2799,20 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
 
         if batch.voice is not None:
             _check_voice(batch.voice, batch_task)
-        if batch.language is not None:
-            _check_language(batch.language)
 
         for item in batch.items:
             task = item.task_type or batch_task
             if item.voice is not None:
                 _check_voice(item.voice, item.task_type)
-            if item.language is not None:
-                _check_language(item.language)
             if task == "Base":
                 ref_text = item.ref_text if item.ref_text is not None else batch.ref_text
                 xvec = item.x_vector_only_mode if item.x_vector_only_mode is not None else batch.x_vector_only_mode
                 _check_base_ref_text(ref_text, xvec)
+
+        for index, request in enumerate(merged_requests):
+            validation_error = self._validate_tts_request(request)
+            if validation_error is not None:
+                raise ValueError(f"Batch item {index}: {validation_error}")
 
     @staticmethod
     def _merge_batch_item(
@@ -2867,25 +2866,26 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
         if self.engine_client.errored:
             raise self.engine_client.dead_error
 
-        self._pre_validate_batch(batch_request)
-
-        batch_id = f"speech-batch-{random_uuid()}"
-
         merged_requests = [self._merge_batch_item(batch_request, item) for item in batch_request.items]
+        has_inline_ref_audio = [request.ref_audio is not None for request in merged_requests]
         available_speakers = self._get_available_speakers()
         for request in merged_requests:
             if request.voice is not None and _is_default_voice(request.voice.lower(), available_speakers):
                 request.voice = None
 
-        async def _run_item(idx: int, req: OpenAICreateSpeechRequest) -> SpeechBatchItemResult:
-            has_inline_ref_audio = req.ref_audio is not None
-            validation_error = self._validate_tts_request(req)
-            if validation_error is not None:
-                return SpeechBatchItemResult(index=idx, status="error", error=validation_error)
+        self._pre_validate_batch(batch_request, merged_requests)
+
+        batch_id = f"speech-batch-{random_uuid()}"
+
+        async def _run_item(
+            idx: int,
+            req: OpenAICreateSpeechRequest,
+            inline_ref_audio: bool,
+        ) -> SpeechBatchItemResult:
             usage_box: list[SpeechTokenUsage] = []
             try:
                 audio_data, media_type = await self._generate_audio_bytes(
-                    req, base64_encode=True, usage_out=usage_box, has_inline_ref_audio=has_inline_ref_audio
+                    req, base64_encode=True, usage_out=usage_box, has_inline_ref_audio=inline_ref_audio
                 )
             except Exception as e:
                 logger.exception("Batch item %d failed: %s", idx, e)
@@ -2899,7 +2899,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             )
 
         results = await asyncio.gather(
-            *[_run_item(i, req) for i, req in enumerate(merged_requests)],
+            *[_run_item(i, req, has_inline_ref_audio[i]) for i, req in enumerate(merged_requests)],
             return_exceptions=True,
         )
 
